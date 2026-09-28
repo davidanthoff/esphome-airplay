@@ -171,6 +171,8 @@ esp_err_t airplay_core_start(void) {
   audio_output_start();
   ESP_RETURN_ON_ERROR(rtsp_server_start(), TAG, "rtsp_server_start failed");
   s_running = true;
+  /* As upstream: route playback_control's play/pause/volume to AirPlay. */
+  playback_control_set_source(PLAYBACK_SOURCE_AIRPLAY);
   ESP_LOGI(TAG, "AirPlay receiver '%s' started", s_name);
   return ESP_OK;
 }

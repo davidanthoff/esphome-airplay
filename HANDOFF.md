@@ -153,6 +153,11 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - 2026.9.0 builds with a native ESP-IDF 5.5.5 install, not PlatformIO. It lives in `~/.cache/esphome/idf` (framework, xtensa toolchain, and a Python env in `penvs/`).
 - ESPHome creates that Python env with `<its own python> -m venv` (`framework_helpers.create_venv`, interpreter from `$PYTHONEXEPATH` or `sys.executable`). Ubuntu's system Python can't do that without the `python3-venv` apt package. A `uv`-managed CPython (`uv venv --python-preference only-managed`) avoids the need for sudo.
 
+**`psram/__init__.py`: where plain `malloc` goes**
+- ESPHome builds with `CONFIG_SPIRAM_USE_CAPS_ALLOC=y` and **not** `CONFIG_SPIRAM_USE_MALLOC`. Plain `malloc`/`calloc` only ever return internal RAM. ESPHome code gets PSRAM explicitly (`RAMAllocator`, `heap_caps_*`).
+- Upstream airplay-esp32 assumes the opposite. Its `config/sdkconfig.defaults` has `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024` (every `malloc` above 1 KB goes to PSRAM) and `CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y`.
+- Consequence, seen on hardware: `esp_audio_codec`'s AAC decoder couldn't open ("There is no enough memory for AAC buffer"), so AirPlay played silence. Internal RAM was ~60 KB free with a largest block of 31 KB once the speaker chain was running. Fixed by `src/codec_alloc_psram.c`, which overrides the codec's weak `media_lib_module_malloc/calloc` with upstream's 1 KB rule. Upstream's own plain `malloc`s still go to internal RAM (§9).
+
 **`logger/` and `esp32/__init__.py`: ESP-IDF log output**
 - The logger hooks `esp_log_set_vprintf()`. Everything logged with `ESP_LOGx` from plain IDF C code (our core and upstream) is re-logged at the logger's own level under the tag **`esp-idf`**. So `logger: level:` and `logs:` per-tag settings do **not** filter it.
 - What filters it is `esp32: framework: log_level:` (default **ERROR**), which sets `CONFIG_LOG_DEFAULT_LEVEL_*`. The example sets `INFO` for bring-up.
@@ -182,7 +187,8 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | `airplay_core/include/airplay_core.h` | ✅ compiles as C and C++ in the firmware build |
 | `airplay_core/src/airplay_core.c` | 🟡 compiles and links, no warnings. Not yet run on hardware |
 | `airplay_core/src/audio_output_esphome.c` | 🟡 same. **This is where M2 happens** |
-| `airplay_core/src/mdns_airplay_esphome.c` | 🟡 same. TXT records copied 1:1 from upstream |
+| `airplay_core/src/mdns_airplay_esphome.c` | ✅ on hardware: the iPhone lists the device and pairs. TXT records copied 1:1 from upstream |
+| `airplay_core/src/codec_alloc_psram.c` | 🟡 puts the AAC/ALAC decoders' memory in PSRAM (§5). Linked, as `nm` confirms; not yet tried on hardware |
 | `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ CMake and the component manager resolve them on 2026.9.0 with no changes needed. `espressif/mdns` is deduplicated with ESPHome's 1.12.0 |
 | `airplay_core/upstream/` | ✅ vendored by `scripts/sync-upstream.sh`. All 35 listed files compile without warnings |
 | `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0. Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` for M1 |
@@ -200,6 +206,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
    - missing IDF components (anything else in `DEFAULT_EXCLUDED_IDF_COMPONENTS` → `esp32.include_builtin_idf_component`);
    - `CONFIG_*` symbols referenced by upstream code but not declared in our `Kconfig`: add them with upstream's defaults. Build-time `#ifdef`s like `CONFIG_BT_A2DP_ENABLE` should simply stay undefined.
 2. Flash with `esphome run …`, then check `esphome logs`. The component must reach `airplay_core_start()` once Ethernet is up.
+   - **First hardware run (2026-09-28):** Sendspin still works. The iPhone lists the device, pairs, and sends SETUP, SETRATEANCHORTIME and metadata. PTP locks, and the player makes the AirPlay source active (`State changed to PLAYING`). There was no sound because the AAC decoder failed to allocate (§5, fixed by `codec_alloc_psram.c`). Note: in that run Ethernet never came up (`ethernet: Connecting failed`) and the device was on Wi-Fi.
 3. The iPhone shows "Sendspin TOSLINK" in the AirPlay picker with a speaker icon. Selecting it pairs (transient HAP) and plays.
 4. Music plays through TOSLINK for both **buffered AAC** (Apple Music) and **realtime ALAC** (Control Center system audio, or a video app).
 5. Sendspin still works afterwards, and switching MA→AirPlay→MA works.
@@ -243,7 +250,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 |---|---|---|
 | 1 | **libsodium duplicate** if API encryption is enabled | Remove `espressif/libsodium` from `airplay_core/idf_component.yml` and rely on ESPHome's; both are 1.0.21. Not an issue for the example config. |
 | 2 | **CPU starvation**: playback task at priority 9 | Upstream needs it above its receiver tasks. ESPHome's loop runs at priority 1, and i2s/mixer/resampler tasks have their own priorities. Watch for ESPHome loop lag and task WDT. The task mostly blocks in `write_output`. If needed, lower all of airplay's tasks together rather than just this one. |
-| 3 | **Memory** | Buffered AAC keeps a deep jitter buffer (upstream sizes are PSRAM-aware). This board has 8 MB PSRAM, so it's comfortable. Measure in M1 anyway. |
+| 3 | **Memory** | PSRAM is not the problem; upstream's jitter buffer asks for PSRAM explicitly. **Internal RAM is.** First hardware run (Wi-Fi, speaker chain started): ~62 KB free, 31 KB largest block. Upstream expects every `malloc` above 1 KB to go to PSRAM, but under ESPHome they all go to internal RAM (§5). The codec is redirected by `codec_alloc_psram.c`. If other upstream allocations fail (pairing, plist, the realtime path), options are: redirect more of them the same way; set `CONFIG_SPIRAM_USE_MALLOC` + `ALWAYSINTERNAL=1024` globally (changes ESPHome's behaviour, test Sendspin too); or shrink the speaker chain. |
 | 4 | **Flush / stale audio** | See M3. |
 | 5 | **Two sources of truth for volume** | The iPhone slider, the HA slider, and the player's `volume_min/max` (0.4–0.9 in this config). Mapping is linear dB→0..1, then the player's range. It may feel odd; tune in M4. |
 | 6 | **`esp_audio_codec` licence**: binary-only, "exclusively with Espressif products" | Fine for personal builds. It conflicts with plain GPL for *distributed binaries*, which is why upstream's GPL PR adds a linking exception. Don't publish binaries until that's sorted. |

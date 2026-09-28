@@ -61,10 +61,14 @@ set(GLUE_SRCS
     src/airplay_core.c
     src/audio_output_esphome.c
     src/mdns_airplay_esphome.c
+    src/codec_alloc_psram.c   # overrides esp_audio_codec's weak allocators
 )
 
 idf_component_register(
     SRCS ${GLUE_SRCS} ${UPSTREAM_SRCS}
+    # Link every object, including codec_alloc_psram.c: nothing references it
+    # directly (it replaces weak symbols), so the linker would skip it.
+    WHOLE_ARCHIVE
     INCLUDE_DIRS include
     PRIV_INCLUDE_DIRS
         src
@@ -80,6 +84,7 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
+        heap
         esp_http_client   # dacp_client.c (AirPlay 1 remote control)
         mbedtls
         lwip
