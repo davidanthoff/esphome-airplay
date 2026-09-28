@@ -72,8 +72,16 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
     EVENT_PLAYING = 1 << 0,
     EVENT_PAUSED = 1 << 1,
     EVENT_DISCONNECTED = 1 << 2,
+    EVENT_CONNECTED = 1 << 3,
   };
   std::atomic<uint32_t> pending_events_{0};
+
+  /// Keep WiFi out of power save while a sender is connected, as Sendspin does
+  /// while it streams. Realtime AirPlay audio and the PTP/NTP timing packets
+  /// are UDP; with the modem dozing between beacons they arrive late or not at
+  /// all. Main loop only.
+  void set_network_high_performance_(bool enable);
+  bool network_high_performance_{false};
 
   std::string advertised_name_;
   uint32_t output_delay_us_{0};

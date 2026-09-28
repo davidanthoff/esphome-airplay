@@ -158,6 +158,13 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - Upstream airplay-esp32 assumes the opposite. Its `config/sdkconfig.defaults` has `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024` (every `malloc` above 1 KB goes to PSRAM) and `CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y`.
 - Consequence, seen on hardware: `esp_audio_codec`'s AAC decoder couldn't open ("There is no enough memory for AAC buffer"), so AirPlay played silence. Internal RAM was ~60 KB free with a largest block of 31 KB once the speaker chain was running. Fixed by `src/codec_alloc_psram.c`, which overrides the codec's weak `media_lib_module_malloc/calloc` with upstream's 1 KB rule. Upstream's own plain `malloc`s still go to internal RAM (§9).
 
+**`wifi/`: power save while streaming**
+- With the default `power_save_mode`, the station sits in `WIFI_PS_MIN_MODEM` (the log shows `Set ps type: 1`). Streaming components switch it off at runtime:
+  - Python: `wifi.enable_runtime_power_save_control()` and `wifi.enable_runtime_roaming_suppression()`.
+  - C++: `wifi::global_wifi_component->request_high_performance()` / `release_high_performance()` and `request_roaming_suppression()` / `release_roaming_suppression()`.
+  - These are counted and thread-safe; the switch is applied on the main loop. Sendspin does this in `SendspinHub::on_request/release_high_performance()`.
+- The AirPlay source now holds both from client connect (or first PLAYING) until disconnect. TCP (buffered AirPlay 2) tolerates modem sleep. UDP (realtime audio, PTP/NTP timing) doesn't.
+
 **`logger/` and `esp32/__init__.py`: ESP-IDF log output**
 - The logger hooks `esp_log_set_vprintf()`. Everything logged with `ESP_LOGx` from plain IDF C code (our core and upstream) is re-logged at the logger's own level under the tag **`esp-idf`**. So `logger: level:` and `logs:` per-tag settings do **not** filter it.
 - What filters it is `esp32: framework: log_level:` (default **ERROR**), which sets `CONFIG_LOG_DEFAULT_LEVEL_*`. The example sets `INFO` for bring-up.
@@ -208,7 +215,9 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 2. Flash with `esphome run …`, then check `esphome logs`. The component must reach `airplay_core_start()` once Ethernet is up.
    - **First hardware run (2026-09-28):** Sendspin still works. The iPhone lists the device, pairs, and sends SETUP, SETRATEANCHORTIME and metadata. PTP locks, and the player makes the AirPlay source active (`State changed to PLAYING`). There was no sound because the AAC decoder failed to allocate (§5, fixed by `codec_alloc_psram.c`). Note: in that run Ethernet never came up (`ethernet: Connecting failed`) and the device was on Wi-Fi.
 3. The iPhone shows "Sendspin TOSLINK" in the AirPlay picker with a speaker icon. Selecting it pairs (transient HAP) and plays.
-4. Music plays through TOSLINK for both **buffered AAC** (Apple Music) and **realtime ALAC** (Control Center system audio, or a video app).
+4. Music plays through TOSLINK for both **buffered AAC** and **realtime ALAC**. The sending app decides which type is used, not where the speaker is picked. Against this receiver, iOS sent buffered (`stream_type=103`) for everything tried, including Apple Music, YouTube and Safari video. To exercise ALAC/realtime, set `airplay_1_only: true`: AirPlay 1 is always realtime ALAC (`stream_type=96`) over UDP with NTP timing.
+   - **2026-09-28:** buffered AAC plays after the PSRAM fix (PR #2). YouTube is in lip sync by eye.
+   - AirPlay 1 connected and decoded ALAC, but it stayed silent. The receive buffer never filled (`buffered` ≤ 17 frames), and every ~0.5 s `Skipped N stale start frames` discarded 40–60 frames at the gaps in the stream. That points to UDP loss. The device was on Wi-Fi in modem power save (see §5), and the fix is to hold high-performance Wi-Fi during a session. Still to be confirmed on hardware.
 5. Sendspin still works afterwards, and switching MA→AirPlay→MA works.
 6. Record the heap/PSRAM headroom (`debug:` component) while streaming. ESPHome's free-heap sensor is enough.
 
@@ -258,6 +267,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | 8 | **ESPHome API churn** | `media_source` and Sendspin are new and marked experimental. Pin the ESPHome version you build with, and re-check §5 on upgrades. |
 | 9 | **Sockets estimate** | Verify with lwIP stats in M1; `media_source.py` reserves TCP 5 / UDP 6 / listen 3. |
 | 10 | **`output_delay` on this TOSLINK chain** | Unknown until measured (M2). |
+| 11 | **Stale PTP lock at AirPlay 1 start** | Seen 2026-09-28. An AirPlay 2 client (192.168.1.39) connected and left. `ptp_clock` then reported LOCKED with an absurd offset. The next AirPlay 1 session's first anchors used PTP (`ptp_locked=1`, frames "13 years early") until the lock dropped after ~6 s and NTP took over. This is upstream behaviour, harmless once NTP takes over, but it may delay the start of AirPlay 1 playback. Revisit in M3 if it's audible. |
 
 ---
 
