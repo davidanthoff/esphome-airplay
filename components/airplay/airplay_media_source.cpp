@@ -5,6 +5,10 @@
 #include "esphome/components/network/util.h"
 #include "esphome/core/log.h"
 
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -69,6 +73,14 @@ void AirPlayMediaSource::loop() {
   uint32_t events = this->pending_events_.exchange(0, std::memory_order_acq_rel);
   if (events == 0) {
     return;
+  }
+
+  if (events & EVENT_DISCONNECTED) {
+    this->set_network_high_performance_(false);
+  }
+  // A connect or play in the same batch as a disconnect is from a newer session.
+  if (events & (EVENT_CONNECTED | EVENT_PLAYING)) {
+    this->set_network_high_performance_(true);
   }
 
   if (events & EVENT_DISCONNECTED) {
@@ -211,6 +223,9 @@ size_t AirPlayMediaSource::on_core_write_(const int16_t *pcm, size_t frames, uin
 // THREAD CONTEXT: airplay_core RTSP task
 void AirPlayMediaSource::on_core_event_(airplay_core_event_t event, const airplay_core_metadata_t *metadata) {
   switch (event) {
+    case AIRPLAY_CORE_EVENT_CLIENT_CONNECTED:
+      this->pending_events_.fetch_or(EVENT_CONNECTED, std::memory_order_acq_rel);
+      break;
     case AIRPLAY_CORE_EVENT_PLAYING:
       this->pending_events_.fetch_or(EVENT_PLAYING, std::memory_order_acq_rel);
       break;
@@ -249,6 +264,34 @@ void AirPlayMediaSource::on_core_volume_(float volume_db) {
   this->last_sender_volume_ = volume;
   this->request_mute_(false);
   this->request_volume_(volume);
+}
+
+// THREAD CONTEXT: main loop
+void AirPlayMediaSource::set_network_high_performance_(bool enable) {
+  if (enable == this->network_high_performance_) {
+    return;
+  }
+  this->network_high_performance_ = enable;
+  ESP_LOGD(TAG, "%s WiFi high-performance mode", enable ? "Requesting" : "Releasing");
+#ifdef USE_WIFI
+  if (wifi::global_wifi_component == nullptr) {
+    return;
+  }
+#ifdef USE_WIFI_RUNTIME_POWER_SAVE
+  if (enable) {
+    wifi::global_wifi_component->request_high_performance();
+  } else {
+    wifi::global_wifi_component->release_high_performance();
+  }
+#endif
+#ifdef USE_WIFI_RUNTIME_ROAMING_SUPPRESSION
+  if (enable) {
+    wifi::global_wifi_component->request_roaming_suppression();
+  } else {
+    wifi::global_wifi_component->release_roaming_suppression();
+  }
+#endif
+#endif  // USE_WIFI
 }
 
 // --- trampolines ---

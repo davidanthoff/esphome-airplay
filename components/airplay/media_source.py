@@ -7,7 +7,7 @@ media_source.py and sendspin/media_source/__init__.py, 2026.9 / dev).
 from pathlib import Path
 
 import esphome.codegen as cg
-from esphome.components import esp32, media_source, network, socket
+from esphome.components import esp32, media_source, network, socket, wifi
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_NAME
 from esphome.core import CORE
@@ -51,8 +51,13 @@ def _consume_sockets(config: ConfigType) -> ConfigType:
 
 
 def _request_networking(config: ConfigType) -> ConfigType:
-    # Same as Sendspin: bigger lwIP buffers for streaming audio.
+    # Same as Sendspin: bigger lwIP buffers for streaming audio, and the
+    # runtime WiFi APIs the C++ side uses to switch power save off and pause
+    # roaming scans while a sender is connected (request_high_performance(),
+    # request_roaming_suppression()). No effect on Ethernet-only configs.
     network.require_high_performance_networking()
+    wifi.enable_runtime_power_save_control()
+    wifi.enable_runtime_roaming_suppression()
     return config
 
 
