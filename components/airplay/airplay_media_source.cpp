@@ -223,7 +223,8 @@ void AirPlayMediaSource::on_core_event_(airplay_core_event_t event, const airpla
     case AIRPLAY_CORE_EVENT_METADATA:
       // TODO(M4): expose title/artist/album (text_sensor platform, like
       // sendspin's). Copy into a mutex-protected struct here, publish in loop().
-      if (metadata != nullptr) {
+      // Progress updates arrive as METADATA events with empty text fields.
+      if (metadata != nullptr && (metadata->artist[0] != '\0' || metadata->title[0] != '\0')) {
         ESP_LOGD(TAG, "Now playing: %s - %s", metadata->artist, metadata->title);
       }
       break;
