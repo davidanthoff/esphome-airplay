@@ -26,7 +26,7 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  min_version: 2026.8.0
+  min_version: 2026.9.0   # esphome-airplay: the version it was built and verified with
   name_add_mac_suffix: false
 
   project:
@@ -46,9 +46,10 @@ external_components:
       type: local
       path: ../components
     components: [airplay]
+  # ESPHome Builder (Home Assistant) cannot see a local checkout; use:
   # - source: github://davidanthoff/esphome-airplay@main
   #   components: [airplay]
-  #   refresh: 1d
+  #   refresh: 0s   # re-pull on every build while iterating; pin a tag later
 
 
 #######################################################################
@@ -60,6 +61,10 @@ esp32:
   flash_size: 16MB
   framework:
     type: esp-idf
+    # esphome-airplay: the AirPlay core logs through ESP-IDF (ESP_LOGx), and
+    # ESPHome only lets ERROR through by default. INFO shows session start/stop,
+    # pairing and timing warnings. Back to the default once things are stable.
+    log_level: INFO
 
 
 #######################################################################
@@ -78,12 +83,10 @@ psram:
 #######################################################################
 
 logger:
-  level: WARN
-  # esphome-airplay: while developing, raise to DEBUG and use e.g.
-  # logs:
-  #   airplay.media_source: DEBUG
-  #   airplay_core: DEBUG     # ESP-IDF log tags from the C core need
-  #   airplay_out: DEBUG      # CONFIG_LOG_DEFAULT_LEVEL high enough too
+  # esphome-airplay: DEBUG while bringing AirPlay up (was WARN). ESP-IDF output
+  # from the C core arrives under the tag "esp-idf" and is filtered by
+  # esp32: framework: log_level above, not by this level or by `logs:`.
+  level: DEBUG
 
 
 #######################################################################
@@ -335,6 +338,29 @@ text_sensor:
     id: sendspin_album
     name: Album Name
     type: album
+
+
+#######################################################################
+# esphome-airplay: DIAGNOSTICS
+#
+# Heap / PSRAM headroom while streaming (HANDOFF.md, milestone M1).
+#######################################################################
+
+debug:
+  update_interval: 10s
+
+sensor:
+  - platform: debug
+    free:
+      name: Heap Free
+    block:
+      name: Heap Max Block
+    min_free:
+      name: Heap Min Free
+    psram:
+      name: PSRAM Free
+    loop_time:
+      name: Loop Time
 
 
 #######################################################################

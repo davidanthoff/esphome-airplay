@@ -4,7 +4,7 @@ An **AirPlay 2 receiver for ESPHome**, as a `media_source` platform. An ESP32 sp
 
 The protocol stack is [airplay-esp32](https://github.com/rbouteiller/airplay-esp32) by Rémi Bouteiller, vendored unmodified. This repo adds an ESPHome output backend and the media source glue.
 
-> **Status: work in progress.** Not yet built for hardware. See [HANDOFF.md](HANDOFF.md).
+> **Status: work in progress.** Builds with ESPHome 2026.9.0, not yet tested on hardware. See [HANDOFF.md](HANDOFF.md).
 
 ```yaml
 external_components:

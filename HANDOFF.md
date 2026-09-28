@@ -2,7 +2,7 @@
 
 **Goal:** make a cheap ESP32 Sendspin speaker also show up as a **native AirPlay 2 receiver** on the iPhone. It should be multi-selectable and play in sync with HomePods and other AirPlay 2 speakers, while staying a normal Sendspin player for Music Assistant. It lives entirely in a repo David controls, as an ESPHome **external component**. No upstream PRs to ESPHome are needed.
 
-**State on 2026-09-28:** scaffold, not yet built for the device. The architecture is settled and the glue code is written. The config validates, and code generation runs against ESPHome 2026.9.0. The C glue passes a `-Wall -Wextra` syntax check against the real upstream headers. Nobody has run an actual firmware build yet, so that is milestone M1 below.
+**State on 2026-09-28:** builds, not yet run on hardware. The example config compiles and links with ESPHome 2026.9.0 (ESP-IDF 5.5.5). That covers the local checkout and the `github://` source that ESPHome Builder in Home Assistant uses. All 38 `airplay_core` objects are linked into the firmware, and the AirPlay sources compile without warnings. The image is 1.6 MB, about 20% of the 16 MB layout's app partition. Next: flash it and work through milestone M1's hardware checks (§8).
 
 This document is written for whoever picks this up next (most likely Claude Code on David's machine). It records what was decided and why, and which facts were verified, so none of that needs to be rediscovered.
 
@@ -149,6 +149,14 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 **Framework**
 - Only ESP-IDF. The component is `only_on_esp32`, and upstream needs IDF ≥ 5.5.
 
+**Build toolchain (`espidf/toolchain.py`, `espidf/framework.py`)**
+- 2026.9.0 builds with a native ESP-IDF 5.5.5 install, not PlatformIO. It lives in `~/.cache/esphome/idf` (framework, xtensa toolchain, and a Python env in `penvs/`).
+- ESPHome creates that Python env with `<its own python> -m venv` (`framework_helpers.create_venv`, interpreter from `$PYTHONEXEPATH` or `sys.executable`). Ubuntu's system Python can't do that without the `python3-venv` apt package. A `uv`-managed CPython (`uv venv --python-preference only-managed`) avoids the need for sudo.
+
+**`logger/` and `esp32/__init__.py`: ESP-IDF log output**
+- The logger hooks `esp_log_set_vprintf()`. Everything logged with `ESP_LOGx` from plain IDF C code (our core and upstream) is re-logged at the logger's own level under the tag **`esp-idf`**. So `logger: level:` and `logs:` per-tag settings do **not** filter it.
+- What filters it is `esp32: framework: log_level:` (default **ERROR**), which sets `CONFIG_LOG_DEFAULT_LEVEL_*`. The example sets `INFO` for bring-up.
+
 ---
 
 ## 6. Verified facts about upstream (airplay-esp32 @ `811d5f8`, 2026-09-21)
@@ -170,14 +178,14 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | File | State |
 |---|---|
 | `components/airplay/media_source.py` | ✅ validated: `esphome config` passes, and `compile --only-generate` produces the IDF path dependency, sdkconfig options and socket reservations |
-| `components/airplay/airplay_media_source.{h,cpp}` | 🟡 written, modelled on Sendspin's source. Not compiled for the target (an ESPHome host-side syntax check with stubbed IDF showed no errors in these files) |
-| `airplay_core/include/airplay_core.h` | ✅ C and C++ syntax-checked |
-| `airplay_core/src/airplay_core.c` | 🟡 `-Wall -Wextra -fsyntax-only` clean against real upstream headers. Not linked |
+| `components/airplay/airplay_media_source.{h,cpp}` | 🟡 compiles and links for esp32s3 on 2026.9.0. Not yet run on hardware |
+| `airplay_core/include/airplay_core.h` | ✅ compiles as C and C++ in the firmware build |
+| `airplay_core/src/airplay_core.c` | 🟡 compiles and links, no warnings. Not yet run on hardware |
 | `airplay_core/src/audio_output_esphome.c` | 🟡 same. **This is where M2 happens** |
 | `airplay_core/src/mdns_airplay_esphome.c` | 🟡 same. TXT records copied 1:1 from upstream |
-| `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | 🟡 not yet run through CMake / the component manager |
-| `airplay_core/upstream/` | ✅ vendored by `scripts/sync-upstream.sh` |
-| `examples/living-room-sendspin-airplay.yaml` | ✅ validates on 2026.9.0 |
+| `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ CMake and the component manager resolve them on 2026.9.0 with no changes needed. `espressif/mdns` is deduplicated with ESPHome's 1.12.0 |
+| `airplay_core/upstream/` | ✅ vendored by `scripts/sync-upstream.sh`. All 35 listed files compile without warnings |
+| `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0. Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` for M1 |
 
 `TODO(Mx)` markers in the code point to the milestone that owns each item.
 
@@ -186,7 +194,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 ## 8. Milestones
 
 ### M1: builds, advertises, plays (no sync claims yet)
-1. `esphome compile examples/living-room-sendspin-airplay.yaml` (needs `examples/secrets.yaml`). Fix build errors. Expected ones:
+1. ✅ **Done 2026-09-28:** it compiled and linked on the first real build with no changes, so none of the problems anticipated below came up. `esphome compile examples/living-room-sendspin-airplay.yaml` (needs `examples/secrets.yaml`). Fix build errors. Expected ones:
    - component-manager resolution of `airplay_core` deps (mdns, libsodium, esp_audio_codec);
    - warnings-as-errors in upstream C: loosen per file in `CMakeLists.txt`, don't edit `upstream/`;
    - missing IDF components (anything else in `DEFAULT_EXCLUDED_IDF_COMPONENTS` → `esp32.include_builtin_idf_component`);
@@ -275,7 +283,8 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
   esphome logs living-room-sendspin-airplay.yaml
   ```
 - The example config uses the component from the local checkout (`type: local, path: ../components`). When switching to `github://…@ref`, the whole repo (including `airplay_core/`) must be in that repo.
-- For verbose logs, raise `logger: level:` and add per-tag levels (`airplay.media_source`, `airplay_core`, `airplay_out`, and upstream tags like `rtsp_handlers` and `audio_timing`).
+- **ESPHome Builder (Home Assistant add-on)** can't see a local checkout. Paste the example with `external_components` switched to `github://davidanthoff/esphome-airplay@<ref>`, `components: [airplay]`, `refresh: 0s`. That exact variant was compiled on 2026.9.0, and `AIRPLAY_CORE_DIR` resolves inside the cloned repo. Use an add-on on 2026.9.x.
+- Logs: the ESPHome C++ side (`airplay.media_source`) follows `logger:`. The C core and upstream (`airplay_core`, `airplay_out`, `rtsp_handlers`, `audio_timing`, …) show up under tag `esp-idf` and are gated by `esp32: framework: log_level:` (§5).
 - The device is David's living-room Sendspin speaker, so keep a known-good firmware to fall back to. The config without the `esphome-airplay` bits is his current one.
 
 ---
