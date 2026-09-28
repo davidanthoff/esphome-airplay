@@ -1,0 +1,2 @@
+# Keep shell scripts runnable when the repo is checked out on Windows.
+*.sh text eol=lf

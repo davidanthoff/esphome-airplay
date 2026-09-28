@@ -1,0 +1,92 @@
+#pragma once
+
+#include "esphome/core/defines.h"
+
+#ifdef USE_ESP32
+
+#include "esphome/components/audio/audio.h"
+#include "esphome/components/media_source/media_source.h"
+#include "esphome/core/component.h"
+
+#include <airplay_core.h>
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+
+namespace esphome::airplay {
+
+/// @brief AirPlay 2 receiver as an ESPHome media source.
+///
+/// A "smart" source in the MediaSource sense: it starts itself. When an
+/// iPhone begins streaming, it asks the speaker_source media player to play
+/// "airplay://current" (request_play_uri_), exactly the way the Sendspin
+/// media source does with "sendspin://current". The player stops whatever
+/// else is playing and calls play_uri() on us.
+///
+/// Reference implementation for every pattern in here:
+///   esphome/components/sendspin/media_source/sendspin_media_source.cpp
+///
+/// Thread contexts (as in the Sendspin source):
+///   - main loop: play_uri, handle_command, notify_volume/mute_changed, loop
+///   - airplay_core playback task: on_core_write_ (calls write_output)
+///   - airplay_core RTSP task: on_core_event_, on_core_volume_
+///   - speaker callback task: notify_audio_played
+class AirPlayMediaSource final : public Component, public media_source::MediaSource {
+ public:
+  void setup() override;
+  void loop() override;
+  void dump_config() override;
+  /// After ESPHome's mdns component (AFTER_CONNECTION), which owns mdns_init().
+  float get_setup_priority() const override { return setup_priority::AFTER_CONNECTION - 1.0f; }
+
+  void set_advertised_name(const std::string &name) { this->advertised_name_ = name; }
+  void set_output_delay_us(uint32_t delay_us) { this->output_delay_us_ = delay_us; }
+
+  // --- MediaSource interface ---
+  bool play_uri(const std::string &uri) override;
+  void handle_command(media_source::MediaSourceCommand command) override;
+  bool can_handle(const std::string &uri) const override;
+  /// Like Sendspin: we own transport (the sender does), so the player routes
+  /// next/prev/stop to us instead of running its own playlist.
+  bool has_internal_playlist() const override { return true; }
+
+  void notify_volume_changed(float volume) override;
+  void notify_mute_changed(bool is_muted) override;
+  void notify_audio_played(uint32_t frames, int64_t timestamp) override;
+
+ protected:
+  // --- callbacks from airplay_core (C trampolines -> these) ---
+  size_t on_core_write_(const int16_t *pcm, size_t frames, uint32_t sample_rate, uint32_t timeout_ms);
+  void on_core_event_(airplay_core_event_t event, const airplay_core_metadata_t *metadata);
+  void on_core_volume_(float volume_db);
+
+  static size_t core_write_trampoline_(void *ctx, const int16_t *pcm, size_t frames, uint32_t sample_rate,
+                                       uint32_t timeout_ms);
+  static void core_event_trampoline_(void *ctx, airplay_core_event_t event, const airplay_core_metadata_t *metadata);
+  static void core_volume_trampoline_(void *ctx, float volume_db);
+
+  /// Events arrive on core tasks; loop() applies them on the main loop,
+  /// because set_state_() must only run there.
+  enum PendingEvent : uint32_t {
+    EVENT_PLAYING = 1 << 0,
+    EVENT_PAUSED = 1 << 1,
+    EVENT_DISCONNECTED = 1 << 2,
+  };
+  std::atomic<uint32_t> pending_events_{0};
+
+  std::string advertised_name_;
+  uint32_t output_delay_us_{0};
+
+  bool core_started_{false};
+  /// Set when we asked the player to start us and play_uri() has not come
+  /// yet. Same dedup/race guard as SendspinMediaSource::pending_start_: the
+  /// player may send STOP to a busy source before calling play_uri().
+  bool pending_start_{false};
+  /// Last volume we pushed to the player from the sender, to avoid echoing it.
+  float last_sender_volume_{-1.0f};
+};
+
+}  // namespace esphome::airplay
+
+#endif  // USE_ESP32

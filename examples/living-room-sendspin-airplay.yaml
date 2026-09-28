@@ -1,0 +1,348 @@
+## SendspinZero-style TOSLINK player + AirPlay 2 receiver (esphome-airplay)
+## Waveshare ESP32-S3-POE-ETH + TOSLINK transmitter
+##
+## This is David's working Sendspin config with the AirPlay media source added.
+## Every addition is marked "esphome-airplay". Nothing else changed.
+##
+## Wiring:
+##   GPIO17 -> TOSLINK DATA / VIN
+##   3V3    -> TOSLINK VCC
+##   GND    -> TOSLINK GND
+
+substitutions:
+  name: living-room-sendspin
+  friendly_name: Sendspin TOSLINK
+  area: Living Room
+
+  # Startup sound options:
+  # Home_Connected
+  # Home_Connected_Male
+  startup_sound_file: Home_Connected
+
+  # Keep this at 44100 initially, matching SendspinZero.
+  media_sample_rate: "44100"
+
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.8.0
+  name_add_mac_suffix: false
+
+  project:
+    name: realdeco.sendspin_zero
+    version: "2026.8.0"
+
+
+#######################################################################
+# esphome-airplay: external component
+#
+# Local checkout while developing (path is relative to this file).
+# Once pushed, switch to the git source below and pin a ref.
+#######################################################################
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [airplay]
+  # - source: github://davidanthoff/esphome-airplay@main
+  #   components: [airplay]
+  #   refresh: 1d
+
+
+#######################################################################
+# ESP32-S3
+#######################################################################
+
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+
+#######################################################################
+# PSRAM
+#
+# Waveshare ESP32-S3-ETH has 8 MB octal PSRAM.
+#######################################################################
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+
+#######################################################################
+# Logging
+#######################################################################
+
+logger:
+  level: WARN
+  # esphome-airplay: while developing, raise to DEBUG and use e.g.
+  # logs:
+  #   airplay.media_source: DEBUG
+  #   airplay_core: DEBUG     # ESP-IDF log tags from the C core need
+  #   airplay_out: DEBUG      # CONFIG_LOG_DEFAULT_LEVEL high enough too
+
+
+#######################################################################
+# Home Assistant API
+#######################################################################
+
+api:
+  on_client_connected:
+    - lambda: |-
+        if (!id(boot_sound_played)) {
+          id(boot_sound_played) = true;
+          if (id(startup_sound_switch).state) {
+            id(play_sound)->execute(true, std::string("ready_sound"));
+          }
+        }
+
+
+#######################################################################
+# OTA updates
+#######################################################################
+
+ota:
+  - platform: esphome
+
+
+#######################################################################
+# ETHERNET
+#
+# Waveshare ESP32-S3-ETH onboard W5500
+#######################################################################
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+network:
+  priority:
+    - ethernet
+    - wifi
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+#######################################################################
+# SENDSPIN
+#######################################################################
+
+sendspin:
+  id: sendspin_hub
+
+
+#######################################################################
+# DIGITAL AUDIO / TOSLINK
+#
+# GPIO17 goes to DATA/VIN on the optical transmitter.
+#######################################################################
+
+i2s_audio:
+  - id: i2s_audio_bus
+
+
+speaker:
+  - platform: i2s_audio
+    id: box_speaker
+    sample_rate: ${media_sample_rate}
+    i2s_dout_pin: GPIO17
+    spdif_mode: true
+    i2s_audio_id: i2s_audio_bus
+    dac_type: external
+    channel: stereo
+    use_apll: true
+
+  - platform: mixer
+    id: mixing_speaker
+    output_speaker: box_speaker
+    num_channels: 2
+    source_speakers:
+      - id: announcement_mixing_input
+      - id: media_mixing_input
+
+  - platform: resampler
+    id: announcement_resampling_speaker
+    output_speaker: announcement_mixing_input
+    sample_rate: ${media_sample_rate}
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: media_resampling_speaker
+    output_speaker: media_mixing_input
+    sample_rate: ${media_sample_rate}
+    bits_per_sample: 16
+
+
+#######################################################################
+# STARTUP SOUND
+#######################################################################
+
+audio_file:
+  - id: ready_sound
+    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/${startup_sound_file}.flac
+
+
+#######################################################################
+# MEDIA SOURCES
+#######################################################################
+
+media_source:
+  - platform: audio_file
+    id: audio_file_announcement_source
+
+  - platform: audio_http
+    id: http_announcement_source
+
+  - platform: audio_http
+    id: http_media_source
+
+  - platform: sendspin
+    id: sendspin_media_source
+
+  # esphome-airplay: shows up in the iPhone's AirPlay picker.
+  - platform: airplay
+    id: airplay_media_source
+    name: ${friendly_name}        # name in the AirPlay picker
+    output_delay: 0ms             # tune against a HomePod in milestone M2
+    # airplay_1_only: false
+    # timing_threshold: 25ms
+    # realtime_timing_threshold: 50ms
+
+
+#######################################################################
+# MEDIA PLAYERS
+#######################################################################
+
+media_player:
+  - platform: sendspin
+    id: sendspin_group_media_player
+    name: Sendspin Group Media Player
+
+  - platform: speaker_source
+    id: external_media_player
+    name: Media Player
+
+    announcement_pipeline:
+      format: FLAC
+      num_channels: 1
+      sample_rate: ${media_sample_rate}
+      speaker: announcement_resampling_speaker
+      sources:
+        - audio_file_announcement_source
+        - http_announcement_source
+
+    media_pipeline:
+      format: FLAC
+      num_channels: 2
+      sample_rate: ${media_sample_rate}
+      speaker: media_resampling_speaker
+      sources:
+        - http_media_source
+        - sendspin_media_source
+        - airplay_media_source    # esphome-airplay
+
+    volume_increment: 0.05
+    volume_min: 0.4
+    volume_max: 0.9
+
+
+#######################################################################
+# SCRIPTS
+#######################################################################
+
+script:
+  - id: play_sound
+    parameters:
+      priority: bool
+      sound_file: string
+
+    then:
+      - if:
+          condition:
+            lambda: return priority;
+
+          then:
+            - media_player.stop:
+                id: external_media_player
+                announcement: true
+
+      - lambda: |-
+          if (
+            (id(external_media_player).state !=
+             media_player::MediaPlayerState::MEDIA_PLAYER_STATE_ANNOUNCING)
+            || priority
+          ) {
+            id(external_media_player)
+              ->make_call()
+              .set_media_url("audio-file://" + sound_file)
+              .set_announcement(true)
+              .perform();
+          }
+
+
+#######################################################################
+# CONFIGURATION SWITCHES
+#######################################################################
+
+switch:
+  - platform: template
+    id: startup_sound_switch
+    name: Startup sound
+    icon: "mdi:music-note"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+
+#######################################################################
+# RESTART BUTTON
+#######################################################################
+
+button:
+  - platform: restart
+    id: restart_button
+    name: Restart
+    entity_category: config
+    icon: "mdi:restart"
+
+
+#######################################################################
+# SENDSPIN METADATA
+#######################################################################
+
+text_sensor:
+  - platform: sendspin
+    id: sendspin_title
+    name: Song Title
+    type: title
+
+  - platform: sendspin
+    id: sendspin_artist
+    name: Song Artist
+    type: artist
+
+  - platform: sendspin
+    id: sendspin_album
+    name: Album Name
+    type: album
+
+
+#######################################################################
+# GLOBALS
+#######################################################################
+
+globals:
+  - id: boot_sound_played
+    type: bool
+    restore_value: no
+    initial_value: "false"

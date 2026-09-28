@@ -1,0 +1,90 @@
+# airplay_core: the airplay-esp32 protocol stack, packaged as an ESP-IDF
+# component that ESPHome pulls in via esp32.add_idf_component(path=...).
+#
+# Upstream sources live, unmodified, under upstream/ (see UPSTREAM.md and
+# scripts/sync-upstream.sh). We compile only the protocol/audio parts and
+# replace the pieces that assume they own the device (main.c, wifi.c, the I2S
+# output backend, mdns_airplay.c) with the files in src/.
+#
+# STATUS: not yet built. Expect to iterate on this list in milestone M1.
+
+set(UP ${CMAKE_CURRENT_LIST_DIR}/upstream/main)
+
+set(UPSTREAM_SRCS
+    ${UP}/alac_magic_cookie.c
+    ${UP}/settings.c
+    ${UP}/playback_control.c
+    ${UP}/dacp_client.c
+    ${UP}/audio/audio_receiver.c
+    ${UP}/audio/audio_stream.c
+    ${UP}/audio/audio_stream_realtime.c
+    ${UP}/audio/audio_stream_buffered.c
+    ${UP}/audio/audio_decoder.c
+    ${UP}/audio/audio_buffer.c
+    ${UP}/audio/audio_timing.c
+    ${UP}/audio/audio_crypto.c
+    ${UP}/audio/audio_output_common.c    # weak defaults for optional output API
+    ${UP}/rtsp/rtsp_server.c
+    ${UP}/rtsp/rtsp_conn.c
+    ${UP}/rtsp/rtsp_message.c
+    ${UP}/rtsp/rtsp_handlers.c
+    ${UP}/rtsp/rtsp_fairplay.c
+    ${UP}/rtsp/rtsp_crypto.c
+    ${UP}/rtsp/rtsp_rsa.c
+    ${UP}/rtsp/rtsp_events.c
+    ${UP}/plist/plist_xml.c
+    ${UP}/plist/bplist_parser.c
+    ${UP}/plist/bplist_builder.c
+    ${UP}/plist/base64.c
+    ${UP}/hap/hap.c
+    ${UP}/hap/hap_pair_verify.c
+    ${UP}/hap/hap_pair_setup.c
+    ${UP}/hap/hap_crypto.c
+    ${UP}/hap/srp.c
+    ${UP}/hap/tlv8.c
+    ${UP}/network/ptp_clock.c
+    ${UP}/network/ntp_clock.c
+    ${UP}/network/socket_utils.c
+    ${CMAKE_CURRENT_LIST_DIR}/upstream/components/dac/dac.c
+)
+
+# Deliberately NOT compiled (ESPHome owns these, or we replace them):
+#   main.c                      -> src/airplay_core.c
+#   network/mdns_airplay.c      -> src/mdns_airplay_esphome.c
+#   audio/audio_output*.c       -> src/audio_output_esphome.c
+#   audio/audio_resample.c      -> ESPHome's resampler speaker
+#   network/wifi.c ethernet.c web_server.c ota.c dns_server.c log_stream.c
+#   led.c buttons.c eq_events.c bt_coex.c audio/a2dp_sink.c
+#   components/{boards,display,dac_tas5*,dac_es8311,spiffs_storage,...}
+
+set(GLUE_SRCS
+    src/airplay_core.c
+    src/audio_output_esphome.c
+    src/mdns_airplay_esphome.c
+)
+
+idf_component_register(
+    SRCS ${GLUE_SRCS} ${UPSTREAM_SRCS}
+    INCLUDE_DIRS include
+    PRIV_INCLUDE_DIRS
+        src
+        ${UP}
+        ${UP}/audio
+        ${UP}/rtsp
+        ${UP}/plist
+        ${UP}/hap
+        ${UP}/network
+        ${CMAKE_CURRENT_LIST_DIR}/upstream/components/dac/include
+    PRIV_REQUIRES
+        nvs_flash
+        esp_netif
+        esp_event
+        esp_timer
+        esp_http_client   # dacp_client.c (AirPlay 1 remote control)
+        mbedtls
+        lwip
+)
+
+# Upstream is written against -Wall without -Werror; ESPHome's flags may be
+# stricter. Loosen only for upstream files if needed in M1, e.g.:
+# set_source_files_properties(${UPSTREAM_SRCS} PROPERTIES COMPILE_OPTIONS "-Wno-error")
