@@ -191,6 +191,8 @@ void airplay_core_set_output_active(bool active) {
   airplay_output_set_active(active);
 }
 
+void airplay_core_reset_output_cursor(void) { airplay_output_reset_cursor(); }
+
 void airplay_core_notify_played(uint32_t frames, int64_t timestamp_us) {
   airplay_output_notify_played(frames, timestamp_us);
 }

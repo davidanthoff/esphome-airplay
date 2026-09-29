@@ -113,6 +113,14 @@ void airplay_core_stop(void);
 void airplay_core_set_output_active(bool active);
 
 /**
+ * Start the output latency accounting from zero. Call when the host starts a
+ * new playback and has reset its own played-frame bookkeeping (ESPHome's
+ * speaker_source resets pending_frames right after play_uri() returns), and
+ * before any audio of the new playback is written. Not for pause/resume.
+ */
+void airplay_core_reset_output_cursor(void);
+
+/**
  * Report frames that finished playing, forwarded from ESPHome's
  * MediaSource::notify_audio_played(). This is the feedback that lets the
  * timing engine know the real output latency.

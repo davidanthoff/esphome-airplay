@@ -70,6 +70,18 @@ void AirPlayMediaSource::loop() {
     // an Ethernet unplug/replug and restart the core if not.
   }
 
+  if (this->start_output_pending_) {
+    // play_uri() made us the active source, and the player reset its
+    // pending-frame counter right after play_uri() returned. Only now start
+    // the latency accounting and the writes, so that every frame we count as
+    // submitted is also one the player will report back as played.
+    this->start_output_pending_ = false;
+    airplay_core_reset_output_cursor();
+    if (this->get_state() == media_source::MediaSourceState::PLAYING) {
+      airplay_core_set_output_active(true);
+    }
+  }
+
   uint32_t events = this->pending_events_.exchange(0, std::memory_order_acq_rel);
   if (events == 0) {
     return;
@@ -149,7 +161,13 @@ bool AirPlayMediaSource::play_uri(const std::string &uri) {
   // we would start an empty session. The core then writes silence until the
   // next session; acceptable for M1, but consider checking a "session active"
   // flag from the core here.
-  airplay_core_set_output_active(true);
+  //
+  // Output starts in the next loop(), not here: set_state_(PLAYING) makes us
+  // the player's active source immediately, but the player only resets its
+  // pending-frame counter after we return. Frames written in between would
+  // never be reported as played and would read as queued forever, making all
+  // later audio play early.
+  this->start_output_pending_ = true;
   this->set_state_(media_source::MediaSourceState::PLAYING);
   return true;
 }
