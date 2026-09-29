@@ -73,8 +73,18 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
     EVENT_PAUSED = 1 << 1,
     EVENT_DISCONNECTED = 1 << 2,
     EVENT_CONNECTED = 1 << 3,
+    EVENT_VOLUME = 1 << 4,
   };
   std::atomic<uint32_t> pending_events_{0};
+
+  /// The sender's volume (dB) as last received on the RTSP task.
+  std::atomic<float> sender_volume_db_{0.0f};
+  /// Set when a sender volume arrived that is not applied yet. It is applied
+  /// only while AirPlay is the active source (PLAYING/PAUSED), so a sender
+  /// that merely connects (the Apple TV, Music Assistant's AirPlay provider)
+  /// cannot change the volume of whatever else is playing. Main loop only.
+  bool sender_volume_pending_{false};
+  void apply_pending_sender_volume_();
 
   /// Keep WiFi out of power save while a sender is connected, as Sendspin does
   /// while it streams. Realtime AirPlay audio and the PTP/NTP timing packets
@@ -96,8 +106,6 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
   /// Set by play_uri(); loop() then resets the output cursor and starts
   /// writing (see the comment in play_uri()).
   bool start_output_pending_{false};
-  /// Last volume we pushed to the player from the sender, to avoid echoing it.
-  float last_sender_volume_{-1.0f};
 };
 
 }  // namespace esphome::airplay

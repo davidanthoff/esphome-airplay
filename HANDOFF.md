@@ -84,7 +84,9 @@ Upstream is already built around pluggable parts, and the port only plugs into t
 
 1. **Output backend.** Upstream picks one of `audio_output.c` (I2S), `audio_output_spdif.c` or `audio_output_usb.c` at build time and keeps weak defaults in `audio_output_common.c`. `src/audio_output_esphome.c` is simply another backend.
 2. **Latency feedback.** Upstream's timing engine asks `audio_output_get_pipeline_us()` "how long until the next sample I write is heard". The I2S backend answers with "frames handed to DMA − frames DMA sent". We answer with "frames ESPHome accepted − frames ESPHome reported played". ESPHome's `speaker_source` forwards the I2S speaker's DMA-completion callback to the active source as `notify_audio_played(frames, esp_timer_timestamp)`, so **the resampler, mixer, ring buffers and DMA are all inside the measurement.** Only delay *after* the ESP32 (TOSLINK receiver, AVR DSP) is not, and the `output_delay` option covers that.
-3. **Volume.** Upstream calls `dac_set_volume(dB)` through a registered `dac_ops_t`. We register ops that forward to the host, which calls `request_volume_()`.
+3. **Volume.** Upstream calls `dac_set_volume(dB)` through a registered `dac_ops_t`. We register ops that forward to the host.
+   - The host **only applies the sender's volume while AirPlay is the active source** (PLAYING/PAUSED). A value that arrives earlier is kept and applied when the session starts.
+   - **Why:** senders push their stored volume as soon as they *connect*, even without playing. On 2026-09-28 both the Apple TV and Music Assistant's AirPlay provider (which probes the receiver) set the speaker to 0% while Sendspin was playing.
 4. **Session state.** `rtsp_events_register()` gives CONNECTED/PLAYING/PAUSED/DISCONNECTED/METADATA.
 
 ---
