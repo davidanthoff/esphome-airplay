@@ -1,32 +1,11 @@
-# Subset of upstream main/Kconfig.projbuild (airplay-esp32 @ 811d5f8) that the
+# Subset of upstream main/Kconfig.projbuild (airplay-esp32 @ 764ffb6) that the
 # compiled sources read. ESPHome sets these from YAML via
 # esp32.add_idf_sdkconfig_option() in components/airplay/media_source.py.
 # Keep names identical to upstream so the vendored code picks them up.
+# AirPlay 1 vs 2 used to be CONFIG_AIRPLAY_FORCE_V1; upstream made it a
+# runtime setting (settings_airplay_v1()), see airplay_core.c.
 
 menu "AirPlay core (esphome-airplay)"
-
-    config AIRPLAY_FORCE_V1
-        bool "Advertise AirPlay 1 (classic RAOP) only"
-        default n
-        help
-            Hides the AirPlay 2 advertisement. The device then shows up as a
-            classic receiver: no HomeKit pairing, no multi-room sync, but
-            DACP remote control (play/pause/next from the device) works.
-
-    config AIRPLAY_TIMING_THRESHOLD_MS
-        int "Early/late timing threshold for buffered streams (ms)"
-        default 25
-        range 2 200
-        help
-            How far a frame may be early or late before the timing engine
-            holds it (early) or drops it (late). Buffered AirPlay 2 (AAC).
-
-    config AIRPLAY_RT_TIMING_THRESHOLD_MS
-        int "Early/late timing threshold for realtime streams (ms)"
-        default 50
-        range 2 500
-        help
-            Same for unbuffered realtime streams (ALAC over UDP).
 
     config ENABLE_AIRPLAY_ARTWORK
         bool "Receive cover art"

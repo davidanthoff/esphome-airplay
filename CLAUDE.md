@@ -4,7 +4,7 @@ This repo adds an AirPlay 2 receiver to an ESPHome Sendspin speaker, as an ESPHo
 
 ## Rules
 
-- Never edit `airplay_core/upstream/` (vendored airplay-esp32). Re-vendor with `scripts/sync-upstream.sh <commit>`.
+- Never edit `airplay_core/upstream/` (vendored airplay-esp32). Re-vendor with `scripts/sync-upstream.sh <commit>`, using a full commit SHA from upstream's `staging` branch (upstream's `main` only moves at releases), then follow the checklist in `airplay_core/UPSTREAM.md`.
   - C glue goes in `airplay_core/src/`.
   - ESPHome C++/Python goes in `components/airplay/`.
 - ESPHome copies only the top-level files of `components/airplay/`, so don't add subdirectories there.

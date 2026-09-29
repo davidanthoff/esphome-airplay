@@ -40,7 +40,8 @@ def _consume_sockets(config: ConfigType) -> ConfigType:
     """Reserve lwIP sockets so ESPHome sizes CONFIG_LWIP_MAX_SOCKETS for us.
 
     Estimates from reading upstream (verify in M1 with lwIP stats):
-      TCP listen: RTSP :7000, AirPlay 2 event port, buffered-audio port
+      TCP listen: RTSP :7000 (:5000 in AirPlay 1 mode), AirPlay 2 event port,
+                  buffered-audio port
       TCP:        RTSP client (current + old slot), event conn, buffered-audio conn
       UDP:        realtime data/control/timing, PTP 319 + 320, NTP
     Plus one TCP for the DACP HTTP client (AirPlay 1 remote control).
@@ -87,20 +88,17 @@ CONFIG_SCHEMA = cv.All(
                     max=cv.TimePeriod(milliseconds=500),
                 ),
             ),
+            # AirPlay 1 (classic RAOP) only, on port 5000. Applied at boot.
             cv.Optional(CONF_AIRPLAY_1_ONLY, default=False): cv.boolean,
-            cv.Optional(CONF_TIMING_THRESHOLD, default="25ms"): cv.All(
-                cv.positive_time_period_milliseconds,
-                cv.Range(
-                    min=cv.TimePeriod(milliseconds=2),
-                    max=cv.TimePeriod(milliseconds=200),
-                ),
+            # Removed with upstream's engine v2 (airplay-esp32 staging), which
+            # schedules by RTP position and has no early/late thresholds.
+            cv.Optional(CONF_TIMING_THRESHOLD): cv.invalid(
+                "timing_threshold was removed: the upstream timing engine no "
+                "longer uses it. Delete the option."
             ),
-            cv.Optional(CONF_REALTIME_TIMING_THRESHOLD, default="50ms"): cv.All(
-                cv.positive_time_period_milliseconds,
-                cv.Range(
-                    min=cv.TimePeriod(milliseconds=2),
-                    max=cv.TimePeriod(milliseconds=500),
-                ),
+            cv.Optional(CONF_REALTIME_TIMING_THRESHOLD): cv.invalid(
+                "realtime_timing_threshold was removed: the upstream timing "
+                "engine no longer uses it. Delete the option."
             ),
             cv.Optional(CONF_ARTWORK, default=False): cv.boolean,
         }
@@ -121,6 +119,7 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_advertised_name(name))
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_output_delay_us(config[CONF_OUTPUT_DELAY].total_microseconds))
+    cg.add(var.set_airplay_1_only(config[CONF_AIRPLAY_1_ONLY]))
 
     # The AirPlay protocol stack: vendored airplay-esp32 + C glue, built as a
     # local ESP-IDF component (airplay_core/CMakeLists.txt). ESPHome writes it
@@ -139,18 +138,7 @@ async def to_code(config: ConfigType) -> None:
     # modules AirPlay needs on top, from the same source tree.
     esp32.add_idf_component(name="airplay_sodium", path=str(AIRPLAY_SODIUM_DIR))
 
-    # Kconfig symbols declared in airplay_core/Kconfig (same names as upstream).
-    esp32.add_idf_sdkconfig_option(
-        "CONFIG_AIRPLAY_FORCE_V1", config[CONF_AIRPLAY_1_ONLY]
-    )
-    esp32.add_idf_sdkconfig_option(
-        "CONFIG_AIRPLAY_TIMING_THRESHOLD_MS",
-        config[CONF_TIMING_THRESHOLD].total_milliseconds,
-    )
-    esp32.add_idf_sdkconfig_option(
-        "CONFIG_AIRPLAY_RT_TIMING_THRESHOLD_MS",
-        config[CONF_REALTIME_TIMING_THRESHOLD].total_milliseconds,
-    )
+    # Kconfig symbol declared in airplay_core/Kconfig (same name as upstream).
     esp32.add_idf_sdkconfig_option(
         "CONFIG_ENABLE_AIRPLAY_ARTWORK", config[CONF_ARTWORK]
     )

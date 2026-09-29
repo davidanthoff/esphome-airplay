@@ -218,9 +218,7 @@ media_source:
     name: ${friendly_name}        # name in the AirPlay picker
     output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
     # model: esphome-airplay      # "AudioAccessory5,1" = HomePod mini icon in iOS
-    # airplay_1_only: false
-    # timing_threshold: 25ms
-    # realtime_timing_threshold: 50ms
+    # airplay_1_only: false     # true: classic AirPlay 1 only (RTSP on port 5000)
 
 
 #######################################################################

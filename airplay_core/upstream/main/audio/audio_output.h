@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 airplay-esp32 contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 #include <stdbool.h>
@@ -114,6 +117,49 @@ uint32_t audio_output_get_hardware_latency_us(void);
  *         in which case the caller should fall back to the modelled latency.
  */
 bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us);
+
+/**
+ * Local monotonic time (ns) at which the first sample of the NEXT backend
+ * write will be heard.
+ *
+ * Deliberately built on the stable modelled latency rather than the live
+ * cursor from audio_output_get_pipeline_us(): this is a *scheduling* input,
+ * consumed once per render to pick which RTP timestamp to emit next.  The
+ * live cursor steps at DMA descriptor boundaries, so feeding it in here would
+ * make the chosen timestamp jitter by a whole descriptor and repeatedly
+ * re-target the read cursor.  Error measurement still uses the live value.
+ */
+int64_t audio_output_get_next_playout_time_ns(int64_t now_us);
+
+/**
+ * Render callback used by a playback task to pull the next block of PCM.
+ *
+ * @param buffer  destination, interleaved stereo int16.
+ * @param samples capacity in frames.
+ * @return frames written; 0 means "nothing due yet", and the backend emits
+ *         silence for that slice.
+ */
+typedef size_t (*audio_output_source_fn)(int16_t *buffer, size_t samples);
+
+/**
+ * Redirect the playback task away from the AirPlay receiver.
+ *
+ * The three backends share one playback task and one DMA ring, so a second
+ * scheduler (currently only Sendspin) cannot simply write alongside it.  It
+ * installs itself here instead and the task pulls from it exactly as it does
+ * from audio_receiver_read().  Passing NULL restores the AirPlay receiver.
+ *
+ * Callers must have stopped the other source first: this only picks which
+ * renderer is asked for samples, it does not arbitrate ownership.
+ */
+void audio_output_set_source(audio_output_source_fn source);
+
+/**
+ * Pull the next block from whichever source is installed.  Backends call
+ * this instead of audio_receiver_read() so the redirection above applies
+ * uniformly to I2S, S/PDIF and USB.
+ */
+size_t audio_output_read_source(int16_t *buffer, size_t samples);
 
 /**
  * Number of output-underrun episodes since boot: the DMA clocked out

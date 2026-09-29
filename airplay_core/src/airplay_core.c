@@ -6,8 +6,8 @@
  * keeps only the AirPlay bring-up sequence from start_airplay_services() and
  * connects the core to its host through airplay_core_host_t.
  *
- * STATUS: scaffold. Compiles against the upstream APIs as read at commit
- * 811d5f8, but has not been built or run yet. See HANDOFF.md, milestone M1.
+ * Mirrors start_airplay_services() in upstream main/main.c @ 764ffb6
+ * (staging); re-check that sequence when re-vendoring.
  */
 
 #include "airplay_core.h"
@@ -28,8 +28,8 @@
 #include "hap.h"
 #include "mdns_airplay.h"
 #include "playback_control.h"
+#include "playback_events.h"
 #include "ptp_clock.h"
-#include "rtsp_events.h"
 #include "rtsp_server.h"
 #include "settings.h"
 
@@ -69,30 +69,36 @@ static const dac_ops_t s_host_dac_ops = {
 
 /* ---- session events --------------------------------------------------- */
 
-static void on_rtsp_event(rtsp_event_t event, const rtsp_event_data_t *data,
-                          void *user_data) {
+/* Upstream's playback events are an aggregate over all inputs (AirPlay,
+ * Bluetooth, USB, Sendspin). Only AirPlay is compiled here, so the aggregate
+ * is the AirPlay session state. Listeners see transitions only: repeats are
+ * dropped, and a PLAYING from idle arrives as CONNECTED then PLAYING. */
+static void on_playback_event(playback_source_t source, playback_event_t event,
+                              const playback_event_data_t *data,
+                              void *user_data) {
+  (void)source;
   (void)user_data;
   if (s_config.host.on_event == NULL) {
     return;
   }
   switch (event) {
-  case RTSP_EVENT_CLIENT_CONNECTED:
+  case PLAYBACK_EVENT_CONNECTED:
     s_config.host.on_event(s_config.host.ctx,
                            AIRPLAY_CORE_EVENT_CLIENT_CONNECTED, NULL);
     break;
-  case RTSP_EVENT_PLAYING:
+  case PLAYBACK_EVENT_PLAYING:
     s_config.host.on_event(s_config.host.ctx, AIRPLAY_CORE_EVENT_PLAYING,
                            NULL);
     break;
-  case RTSP_EVENT_PAUSED:
+  case PLAYBACK_EVENT_PAUSED:
     s_config.host.on_event(s_config.host.ctx, AIRPLAY_CORE_EVENT_PAUSED,
                            NULL);
     break;
-  case RTSP_EVENT_DISCONNECTED:
+  case PLAYBACK_EVENT_DISCONNECTED:
     s_config.host.on_event(s_config.host.ctx, AIRPLAY_CORE_EVENT_DISCONNECTED,
                            NULL);
     break;
-  case RTSP_EVENT_METADATA: {
+  case PLAYBACK_EVENT_METADATA: {
     if (data == NULL) {
       break;
     }
@@ -142,6 +148,16 @@ esp_err_t airplay_core_init(const airplay_core_config_t *config) {
 
   ESP_RETURN_ON_ERROR(settings_init(), TAG, "settings_init failed");
 
+  /* AirPlay 1 or 2 is an upstream setting in NVS (its web UI sets it), and
+   * settings_init() is the only place that applies it. Store the YAML choice
+   * only when it differs, then load it again. Must happen before anything
+   * reads settings_airplay_v1(): RTSP port, mDNS records, /info. */
+  if (settings_airplay_v1() != config->airplay_v1) {
+    ESP_RETURN_ON_ERROR(settings_set_airplay_v1(config->airplay_v1), TAG,
+                        "settings_set_airplay_v1 failed");
+    ESP_RETURN_ON_ERROR(settings_init(), TAG, "settings_init failed");
+  }
+
   /* rtsp_handlers.c (/info) and mdns read the name from settings. Only write
    * when it changed, to avoid a flash write on every boot. */
   char stored[sizeof(s_name)] = {0};
@@ -158,8 +174,8 @@ esp_err_t airplay_core_init(const airplay_core_config_t *config) {
 
   airplay_output_configure(config->output_delay_us);
 
-  if (rtsp_events_register(on_rtsp_event, NULL) != 0) {
-    ESP_LOGE(TAG, "rtsp_events_register failed (listener table full)");
+  if (playback_events_register(on_playback_event, NULL) != 0) {
+    ESP_LOGE(TAG, "playback_events_register failed (listener table full)");
     return ESP_FAIL;
   }
 
@@ -190,7 +206,8 @@ esp_err_t airplay_core_start(void) {
   s_running = true;
   /* As upstream: route playback_control's play/pause/volume to AirPlay. */
   playback_control_set_source(PLAYBACK_SOURCE_AIRPLAY);
-  ESP_LOGI(TAG, "AirPlay receiver '%s' started", s_name);
+  ESP_LOGI(TAG, "AirPlay %s receiver '%s' started",
+           settings_airplay_v1() ? "1" : "2", s_name);
   return ESP_OK;
 }
 

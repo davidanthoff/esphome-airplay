@@ -7,8 +7,8 @@
  * (audio_output.c = I2S, audio_output_spdif.c, audio_output_usb.c) and keeps
  * weak defaults for the optional calls in audio_output_common.c. This file is
  * one more backend. Read upstream audio_output.c next to it: the structure
- * (playback task pulling from audio_receiver_read(), queue-depth cursor for
- * the timing engine) is deliberately the same.
+ * (playback task pulling from audio_output_read_source(), queue-depth cursor
+ * for the timing engine) is deliberately the same.
  *
  * The one idea that matters:
  *   upstream I2S backend:  queued = frames handed to DMA - frames DMA sent
@@ -23,7 +23,14 @@
  * output_delay_us is for. It is signed: positive plays earlier to make up
  * for delay after the ESP32, negative plays later.
  *
- * STATUS: plays on hardware (M1). Sync accuracy is milestone M2 (HANDOFF.md).
+ * Engine v2 (upstream staging) renders each block for the instant
+ * audio_output_get_next_playout_time_ns() returns, i.e. our pipeline_us plus
+ * its own 5 ms (see UPSTREAM_PIPELINE_LATENCY_US below), and corrects clock
+ * drift by dropping or repeating single samples.
+ *
+ * STATUS: M1 and M2 (vs an Apple TV) were verified on hardware against the
+ * previous upstream engine (811d5f8). Re-measure after the move to engine v2
+ * (HANDOFF.md §8).
  */
 
 #include "audio_output.h"
@@ -38,7 +45,6 @@
 #include "freertos/task.h"
 
 #include "airplay_core_internal.h"
-#include "audio_receiver.h"
 
 static const char *TAG = "airplay_out";
 
@@ -65,14 +71,14 @@ static const char *TAG = "airplay_out";
  * or stopped chain cannot make the queue read short. */
 #define PLAYED_EXTRAPOLATE_MAX_US 25000
 
-/* Upstream audio_timing.c compute_early_us() adds PIPELINE_LATENCY_US (5 ms,
- * "scheduling + I2S write delay") on top of what we return. Our measured
+/* Upstream audio_output_get_next_playout_time_ns() (audio_output_common.c,
+ * OUTPUT_PIPELINE_LATENCY_US; audio_timing.c before engine v2) adds 5 ms,
+ * "scheduling + I2S write delay", on top of what we return. Our measured
  * queue already covers everything from write_output() to the wire, so those
  * 5 ms would be counted twice. On hardware, before this and the extrapolation
  * above, the ESP played ~14 ms early against an Apple TV: ~9 ms from the
- * batched reports, ~5 ms from this. Re-check when re-vendoring: on upstream's
- * staging branch the constant is OUTPUT_PIPELINE_LATENCY_US in
- * audio_output_common.c. */
+ * batched reports, ~5 ms from this. Re-check the upstream value when
+ * re-vendoring. */
 #define UPSTREAM_PIPELINE_LATENCY_US 5000
 
 /* On resume after a pause, keep the cursor unless nothing has been played for
@@ -168,7 +174,9 @@ static void playback_task(void *arg) {
     }
 
     uint32_t rate = (uint32_t)s_source_rate;
-    size_t frames = audio_receiver_read(pcm, FRAME_SAMPLES + 1);
+    /* Same as audio_receiver_read() here: only upstream's Sendspin player,
+     * which we do not compile, installs another source. */
+    size_t frames = audio_output_read_source(pcm, FRAME_SAMPLES + 1);
     if (frames > 0) {
       write_all(pcm, frames, rate);
     } else {
