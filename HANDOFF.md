@@ -231,7 +231,11 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
    - `err` is measured against the engine's own pipeline estimate. A wrong estimate is therefore invisible in `err` and shows up only as a constant offset against another speaker.
    - 2026-09-28: David once heard the ESP clearly out of sync with an Apple TV after switching songs. The likely cause was the cursor reset on pause/resume described in §5, fixed in the `output-cursor-fix` PR. Confirm with the microphone test.
 2. Multi-select this device + a **HomePod** on the iPhone. Measure the offset: record both with one phone mic and cross-correlate a click track (e.g. Audacity), or listen for flanging with both close together. Set `output_delay` to the TOSLINK receiver's/AVR's latency; many AVRs have a known "audio delay" in their menus.
-3. Optional refinement: extrapolate `played` between DMA callbacks (TODO in `audio_output_get_pipeline_us`).
+   - **Measured 2026-09-28** against an **Apple TV**, which has no HomePod; its Wireless Audio Sync was calibrated first. Setup: 60 BPM metronome from Apple Music, one phone recording 23 min, ESP 3 ft and Apple TV speaker 11 ft from the mic, ESP amp muted for the last ~7 beats to identify the clicks.
+   - **Method:** Apple-TV-only click template from the muted beats. In every beat, locate and subtract the Apple TV click, then locate the ESP click in the residual (band-passed cross-correlation, 1.5–8 kHz).
+   - **Drift:** none. −0.4 ms/hour over 23 min, and every 1-minute median was within ±0.5 ms of the mean. The ESP crystal runs ~25 ppm fast; the position servo corrects it about once a minute, a ~2 ms peak-to-peak sawtooth.
+   - **Offset:** ESP −21.3 ms at the mic, **−14.2 ms** after the 7.1 ms distance correction, i.e. the ESP played early. Cause: our pipeline estimate read too long. ESPHome's S/PDIF path reports played frames only every 4 DMA blocks (~17.4 ms), about 8.7 ms on average; upstream also adds a 5 ms `PIPELINE_LATENCY_US` that our measured queue already contains. Fixed in the `sync-offset-fix` PR, which extrapolates `played` between reports (item 3) and subtracts the 5 ms. **Re-measure after it's merged;** the expected residual is within ~±2 ms.
+3. ✅ Extrapolate `played` between DMA callbacks: done in `audio_output_get_pipeline_us`, clamped to 25 ms. `output_delay` is now signed (−200…500 ms) for final fine-tuning.
 4. Two ESP32 devices + HomePod multi-selected, ~1 h. The servo should hold them without audible drift.
 
 **Done when:** it's within a few ms of a HomePod by ear with both side by side, and stays there over an hour.
@@ -271,7 +275,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | 7 | **Upstream licence** | Currently non-commercial. PR #162 → GPL-3.0-or-later + exception (not merged as of 2026-09-28). Personal use and a public non-commercial repo are fine now. Pick our own licence (GPL-3.0-or-later is the natural fit) once #162 lands. |
 | 8 | **ESPHome API churn** | `media_source` and Sendspin are new and marked experimental. Pin the ESPHome version you build with, and re-check §5 on upgrades. |
 | 9 | **Sockets estimate** | Verify with lwIP stats in M1; `media_source.py` reserves TCP 5 / UDP 6 / listen 3. |
-| 10 | **`output_delay` on this TOSLINK chain** | Unknown until measured (M2). |
+| 10 | **`output_delay` on this TOSLINK chain** | Measured 2026-09-28 before the offset fix: the ESP was 14 ms *early*, so our own estimate dominated, not the receiver. Re-measure after the `sync-offset-fix` PR; any residual is what `output_delay` is for (now signed). |
 | 11 | **Stale PTP lock at AirPlay 1 start** | Seen 2026-09-28. An AirPlay 2 client (192.168.1.39) connected and left. `ptp_clock` then reported LOCKED with an absurd offset. The next AirPlay 1 session's first anchors used PTP (`ptp_locked=1`, frames "13 years early") until the lock dropped after ~6 s and NTP took over. This is upstream behaviour, harmless once NTP takes over, but it may delay the start of AirPlay 1 playback. Revisit in M3 if it's audible. |
 
 ---

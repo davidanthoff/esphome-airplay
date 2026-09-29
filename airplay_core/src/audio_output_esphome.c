@@ -20,7 +20,8 @@
  * servo needs. Everything between write_output() and the I2S peripheral
  * (resampler, mixer, ring buffers, DMA) is inside that measurement. Only
  * delay after the ESP32 (TOSLINK receiver, amp DSP) is not, which is what
- * output_delay_us is for.
+ * output_delay_us is for. It is signed: positive plays earlier to make up
+ * for delay after the ESP32, negative plays later.
  *
  * STATUS: plays on hardware (M1). Sync accuracy is milestone M2 (HANDOFF.md).
  */
@@ -56,6 +57,24 @@ static const char *TAG = "airplay_out";
 
 #define PLAYBACK_TASK_STACK 4096
 
+/* ESPHome reports played frames in batches: in S/PDIF mode every 4 DMA blocks
+ * (4 x 192 frames, ~17.4 ms at 44.1 kHz), with standard I2S about once per
+ * DMA buffer (~15 ms). Each report's timestamp is when its last sample left
+ * the wire. Between reports, frames keep playing, so "played" is
+ * extrapolated from that timestamp. Never further than this, so a stalled
+ * or stopped chain cannot make the queue read short. */
+#define PLAYED_EXTRAPOLATE_MAX_US 25000
+
+/* Upstream audio_timing.c compute_early_us() adds PIPELINE_LATENCY_US (5 ms,
+ * "scheduling + I2S write delay") on top of what we return. Our measured
+ * queue already covers everything from write_output() to the wire, so those
+ * 5 ms would be counted twice. On hardware, before this and the extrapolation
+ * above, the ESP played ~14 ms early against an Apple TV: ~9 ms from the
+ * batched reports, ~5 ms from this. Re-check when re-vendoring: on upstream's
+ * staging branch the constant is OUTPUT_PIPELINE_LATENCY_US in
+ * audio_output_common.c. */
+#define UPSTREAM_PIPELINE_LATENCY_US 5000
+
 /* On resume after a pause, keep the cursor unless nothing has been played for
  * this long. By then the speaker chain (resampler + mixer + I2S, ~0.7 s of
  * buffering plus their idle timeouts) has certainly drained, so any frames it
@@ -70,7 +89,7 @@ static volatile bool s_running = false;
 static volatile bool s_active = false;
 static volatile bool s_flush_requested = false;
 static volatile int s_source_rate = 44100;
-static uint32_t s_output_delay_us = 0;
+static int32_t s_output_delay_us = 0;
 
 /* Written by the playback task / speaker callback task; 64-bit so they never
  * wrap. Accessed with __atomic builtins like upstream does. */
@@ -168,7 +187,7 @@ static void playback_task(void *arg) {
 
 /* ---- glue called from airplay_core.c --------------------------------- */
 
-void airplay_output_configure(uint32_t output_delay_us) {
+void airplay_output_configure(int32_t output_delay_us) {
   s_output_delay_us = output_delay_us;
 }
 
@@ -260,29 +279,39 @@ void audio_output_set_source_rate(int rate) {
 }
 
 uint32_t audio_output_get_hardware_latency_us(void) {
-  return HOST_NOMINAL_LATENCY_US + s_output_delay_us;
+  int64_t us = (int64_t)HOST_NOMINAL_LATENCY_US + s_output_delay_us;
+  return us > 0 ? (uint32_t)us : 0;
 }
 
 bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us) {
-  if (__atomic_load_n(&s_last_played_us, __ATOMIC_RELAXED) == 0) {
+  int64_t last_played_us = __atomic_load_n(&s_last_played_us, __ATOMIC_RELAXED);
+  if (last_played_us == 0) {
     /* No feedback yet (host not playing): let the timing engine use the
      * modelled latency instead. */
     return false;
   }
   uint64_t submitted = __atomic_load_n(&s_submitted_frames, __ATOMIC_RELAXED);
   uint64_t played = __atomic_load_n(&s_played_frames, __ATOMIC_RELAXED);
+  int64_t now = esp_timer_get_time();
+  uint32_t rate = (uint32_t)s_source_rate;
+
+  /* Frames that have left the wire since the last report. */
+  int64_t since_us = now - last_played_us;
+  if (since_us < 0) {
+    since_us = 0;
+  } else if (since_us > PLAYED_EXTRAPOLATE_MAX_US) {
+    since_us = PLAYED_EXTRAPOLATE_MAX_US;
+  }
+  played += ((uint64_t)since_us * rate) / 1000000ULL;
+
   uint64_t queued = submitted > played ? submitted - played : 0;
   if (now_us != NULL) {
-    *now_us = esp_timer_get_time();
+    *now_us = now;
   }
   if (pipeline_us != NULL) {
-    /* TODO(M2): "played" advances in DMA-block steps, so this over-reports by
-     * up to one block (a few ms). Upstream accepts the same error for I2S and
-     * lets the servo absorb it. A refinement is to extrapolate from
-     * s_last_played_us: played += (now - last_played_us) * rate / 1e6,
-     * clamped to one block. */
-    *pipeline_us = (uint32_t)((queued * 1000000ULL) / (uint32_t)s_source_rate) +
-                   s_output_delay_us;
+    int64_t us = (int64_t)((queued * 1000000ULL) / rate) + s_output_delay_us -
+                 UPSTREAM_PIPELINE_LATENCY_US;
+    *pipeline_us = us > 0 ? (uint32_t)us : 0;
   }
   return true;
 }

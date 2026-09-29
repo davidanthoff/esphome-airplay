@@ -68,10 +68,14 @@ CONFIG_SCHEMA = cv.All(
             # Name in the iOS AirPlay picker. Defaults to the node's friendly_name.
             cv.Optional(CONF_NAME): cv.All(cv.string_strict, cv.Length(max=64)),
             # Delay added AFTER the ESP32 (TOSLINK receiver, AVR DSP). The timing
-            # engine plays this much earlier. Tune against a HomePod.
+            # engine plays this much earlier. Negative values make it play
+            # later. Tune against another AirPlay 2 speaker (HomePod, Apple TV).
             cv.Optional(CONF_OUTPUT_DELAY, default="0ms"): cv.All(
-                cv.positive_time_period_microseconds,
-                cv.Range(max=cv.TimePeriod(milliseconds=500)),
+                cv.time_period_microseconds,
+                cv.Range(
+                    min=cv.TimePeriod(milliseconds=-200),
+                    max=cv.TimePeriod(milliseconds=500),
+                ),
             ),
             cv.Optional(CONF_AIRPLAY_1_ONLY, default=False): cv.boolean,
             cv.Optional(CONF_TIMING_THRESHOLD, default="25ms"): cv.All(

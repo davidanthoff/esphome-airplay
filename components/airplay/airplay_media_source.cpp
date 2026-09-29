@@ -48,7 +48,7 @@ void AirPlayMediaSource::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "AirPlay Media Source:\n"
                 "  Advertised name: %s\n"
-                "  Output delay: %" PRIu32 " us",
+                "  Output delay: %" PRId32 " us",
                 this->advertised_name_.c_str(), this->output_delay_us_);
 }
 
