@@ -106,12 +106,20 @@ void AirPlayMediaSource::loop() {
   }
 
   uint32_t events = this->pending_events_.exchange(0, std::memory_order_acq_rel);
-  if (events == 0) {
+  if (events & EVENT_VOLUME) {
+    this->sender_volume_pending_ = true;
+  }
+  if (events == 0 || events == EVENT_VOLUME) {
+    this->apply_pending_sender_volume_();
     return;
   }
 
   if (events & EVENT_DISCONNECTED) {
     this->set_network_high_performance_(false);
+    if (!(events & (EVENT_CONNECTED | EVENT_PLAYING))) {
+      // That session is over; don't carry its volume into the next one.
+      this->sender_volume_pending_ = false;
+    }
   }
   // A connect or play in the same batch as a disconnect is from a newer session.
   if (events & (EVENT_CONNECTED | EVENT_PLAYING)) {
@@ -156,6 +164,32 @@ void AirPlayMediaSource::loop() {
         break;
     }
   }
+
+  this->apply_pending_sender_volume_();
+}
+
+// THREAD CONTEXT: main loop
+void AirPlayMediaSource::apply_pending_sender_volume_() {
+  if (!this->sender_volume_pending_) {
+    return;
+  }
+  auto state = this->get_state();
+  if (state != media_source::MediaSourceState::PLAYING && state != media_source::MediaSourceState::PAUSED) {
+    // Not our turn: another source (Sendspin, HTTP) may be playing, or the
+    // sender only connected. Keep the value; it applies when we start playing.
+    return;
+  }
+  this->sender_volume_pending_ = false;
+  float volume_db = this->sender_volume_db_.load(std::memory_order_relaxed);
+  if (volume_db <= AIRPLAY_VOLUME_MUTE_DB + 1.0f) {
+    this->request_mute_(true);
+    return;
+  }
+  // AirPlay's dB value is linear in slider position, so map it linearly.
+  // The player then applies its own volume_min/volume_max.
+  float volume = std::clamp((volume_db - AIRPLAY_VOLUME_MIN_DB) / -AIRPLAY_VOLUME_MIN_DB, 0.0f, 1.0f);
+  this->request_mute_(false);
+  this->request_volume_(volume);
 }
 
 // --- MediaSource interface ---
@@ -289,22 +323,11 @@ void AirPlayMediaSource::on_core_event_(airplay_core_event_t event, const airpla
   }
 }
 
-// THREAD CONTEXT: airplay_core RTSP task. request_volume_/request_mute_ are
-// marshalled to the main loop by the player (defer()), so calling them here is safe.
+// THREAD CONTEXT: airplay_core RTSP task. Only record the value; loop() decides
+// on the main loop whether it applies (apply_pending_sender_volume_()).
 void AirPlayMediaSource::on_core_volume_(float volume_db) {
-  if (volume_db <= AIRPLAY_VOLUME_MUTE_DB + 1.0f) {
-    this->request_mute_(true);
-    return;
-  }
-  // AirPlay's dB value is linear in slider position, so map it linearly.
-  // The player then applies its own volume_min/volume_max.
-  float volume = std::clamp((volume_db - AIRPLAY_VOLUME_MIN_DB) / -AIRPLAY_VOLUME_MIN_DB, 0.0f, 1.0f);
-  if (volume == this->last_sender_volume_) {
-    return;
-  }
-  this->last_sender_volume_ = volume;
-  this->request_mute_(false);
-  this->request_volume_(volume);
+  this->sender_volume_db_.store(volume_db, std::memory_order_relaxed);
+  this->pending_events_.fetch_or(EVENT_VOLUME, std::memory_order_acq_rel);
 }
 
 // THREAD CONTEXT: main loop
