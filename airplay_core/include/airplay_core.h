@@ -87,6 +87,14 @@ typedef struct {
    */
   int32_t output_delay_us;
 
+  /**
+   * MAC address used as the AirPlay device id (mDNS "deviceid", /info, HAP).
+   * All zero: the ESP32's Wi-Fi station MAC, like upstream. The ESPHome
+   * component passes the MAC its Sendspin hub reports, so that Music
+   * Assistant can recognise both as the same device.
+   */
+  uint8_t device_mac[6];
+
   airplay_core_host_t host;
 } airplay_core_config_t;
 

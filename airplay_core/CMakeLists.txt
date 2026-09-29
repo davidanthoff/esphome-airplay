@@ -62,6 +62,7 @@ set(GLUE_SRCS
     src/audio_output_esphome.c
     src/mdns_airplay_esphome.c
     src/codec_alloc_psram.c   # overrides esp_audio_codec's weak allocators
+    src/device_mac.c          # the MAC AirPlay uses as its device id
 )
 
 idf_component_register(
@@ -89,6 +90,14 @@ idf_component_register(
         mbedtls
         lwip
 )
+
+# Upstream takes its device id from esp_read_mac(ESP_MAC_WIFI_STA). Point
+# those calls, in upstream code only, at src/device_mac.c, which returns the
+# identity MAC the host chose (the one ESPHome's Sendspin reports). The macro
+# renames the esp_mac.h declaration too, so upstream files still compile
+# unchanged. Our glue calls airplay_core_read_mac() explicitly.
+set_source_files_properties(${UPSTREAM_SRCS} PROPERTIES
+    COMPILE_DEFINITIONS "esp_read_mac=airplay_core_read_mac")
 
 # Upstream is written against -Wall without -Werror; ESPHome's flags may be
 # stricter. Loosen only for upstream files if needed in M1, e.g.:

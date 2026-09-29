@@ -7,10 +7,11 @@
  *   - no mdns_init() / mdns_hostname_set(): ESPHome's mdns component has
  *     already done both, and a second mdns_init() returns
  *     ESP_ERR_INVALID_STATE, which upstream ESP_ERROR_CHECKs (= reboot loop).
- *   - the device id comes from esp_read_mac() directly instead of upstream's
- *     wifi.c helper, which we do not compile. Upstream uses the WiFi STA MAC
- *     everywhere (rtsp_handlers.c, hap_pair_verify.c), even on Ethernet, so
- *     we must use the same one here.
+ *   - the device id comes from airplay_core_read_mac() instead of upstream's
+ *     wifi.c helper, which we do not compile. Upstream asks for the WiFi STA
+ *     MAC everywhere (rtsp_handlers.c, hap_pair_verify.c), even on Ethernet;
+ *     in our build those calls return the identity MAC chosen by the host
+ *     (device_mac.c), and this file must use the same one.
  *
  * The TXT records must stay in sync with upstream's (features, pk, flags,
  * ...), so when you bump the vendored upstream, diff its mdns_airplay.c
@@ -26,6 +27,7 @@
 #include "esp_mac.h"
 #include "mdns.h"
 
+#include "airplay_core_internal.h"
 #include "hap.h"
 #include "rtsp_handlers.h" /* AIRPLAY_FEATURES_LO / _HI */
 #include "settings.h"
@@ -59,7 +61,7 @@ void mdns_airplay_init(void) {
   settings_get_device_name(device_name, sizeof(device_name));
 
   uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  airplay_core_read_mac(mac, ESP_MAC_WIFI_STA); /* identity MAC, see device_mac.c */
   snprintf(device_id, sizeof(device_id), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 

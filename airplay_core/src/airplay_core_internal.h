@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "esp_err.h"
+#include "esp_mac.h"
+
 #include "airplay_core.h"
 
 #ifdef __cplusplus
@@ -21,6 +24,14 @@ const char *airplay_core_get_name(void);
 /** Forward PCM to the host (wraps airplay_core_host_t.write). */
 size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
                                uint32_t sample_rate, uint32_t timeout_ms);
+
+/* ---- device_mac.c -------------------------------------------------------- */
+
+/** Set the identity MAC (all zero or NULL: use the real Wi-Fi STA MAC). */
+void airplay_core_set_device_mac(const uint8_t mac[6]);
+
+/** esp_read_mac() replacement for upstream code: see device_mac.c. */
+esp_err_t airplay_core_read_mac(uint8_t *mac, esp_mac_type_t type);
 
 /* ---- audio_output_esphome.c ---------------------------------------------- */
 /* The rest of the output backend is the upstream audio_output.h API. */

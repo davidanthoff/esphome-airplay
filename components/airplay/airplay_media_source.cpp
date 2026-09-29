@@ -3,8 +3,12 @@
 #ifdef USE_ESP32
 
 #include "esphome/components/network/util.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#ifdef USE_ETHERNET
+#include "esphome/components/ethernet/ethernet_component.h"
+#endif
 #ifdef USE_WIFI
 #include "esphome/components/wifi/wifi_component.h"
 #endif
@@ -26,10 +30,27 @@ static constexpr char URI_CURRENT[] = "airplay://current";
 static constexpr float AIRPLAY_VOLUME_MIN_DB = -30.0f;
 static constexpr float AIRPLAY_VOLUME_MUTE_DB = -144.0f;
 
+// The MAC ESPHome's Sendspin hub reports as its client id
+// (SendspinHub::get_client_id_into_buffer, 2026.9): the Ethernet MAC whenever
+// `ethernet:` is configured, the base MAC otherwise. AirPlay advertises the same
+// one, so Music Assistant links the AirPlay and the Sendspin player of this
+// device into one player instead of showing two.
+static void get_identity_mac(uint8_t mac[6]) {
+#ifdef USE_ETHERNET
+  if (ethernet::global_eth_component != nullptr) {
+    ethernet::global_eth_component->get_eth_mac_address_raw(mac);
+    return;
+  }
+#endif
+  get_mac_address_raw(mac);
+}
+
 void AirPlayMediaSource::setup() {
   airplay_core_config_t config{};
   config.name = this->advertised_name_.c_str();
   config.output_delay_us = this->output_delay_us_;
+  get_identity_mac(config.device_mac);
+  std::copy(std::begin(config.device_mac), std::end(config.device_mac), this->device_mac_);
   config.host.ctx = this;
   config.host.write = &AirPlayMediaSource::core_write_trampoline_;
   config.host.on_event = &AirPlayMediaSource::core_event_trampoline_;
@@ -48,8 +69,10 @@ void AirPlayMediaSource::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "AirPlay Media Source:\n"
                 "  Advertised name: %s\n"
+                "  Device id (MAC): %02X:%02X:%02X:%02X:%02X:%02X\n"
                 "  Output delay: %" PRId32 " us",
-                this->advertised_name_.c_str(), this->output_delay_us_);
+                this->advertised_name_.c_str(), this->device_mac_[0], this->device_mac_[1], this->device_mac_[2],
+                this->device_mac_[3], this->device_mac_[4], this->device_mac_[5], this->output_delay_us_);
 }
 
 // THREAD CONTEXT: main loop
