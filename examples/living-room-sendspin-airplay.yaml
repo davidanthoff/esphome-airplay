@@ -216,7 +216,7 @@ media_source:
   - platform: airplay
     id: airplay_media_source
     name: ${friendly_name}        # name in the AirPlay picker
-    output_delay: 0ms             # tune against a HomePod in milestone M2
+    output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
     # airplay_1_only: false
     # timing_threshold: 25ms
     # realtime_timing_threshold: 50ms

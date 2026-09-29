@@ -15,7 +15,7 @@ media_source:
   - platform: airplay
     id: airplay_media_source
     # name: Living Room          # defaults to the node's friendly_name
-    # output_delay: 0ms          # latency added after the ESP32 (TOSLINK receiver, AVR)
+    # output_delay: 0ms          # latency added after the ESP32 (TOSLINK receiver, AVR); negative = play later
 
 media_player:
   - platform: speaker_source

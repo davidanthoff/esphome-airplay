@@ -83,8 +83,9 @@ typedef struct {
    * Fixed delay, in microseconds, that the audio chain adds AFTER the point
    * where the host reports frames as played (e.g. a TOSLINK receiver or AV
    * amplifier). The timing engine plays that much earlier to compensate.
+   * Negative values make it play later (fine-tuning against other speakers).
    */
-  uint32_t output_delay_us;
+  int32_t output_delay_us;
 
   airplay_core_host_t host;
 } airplay_core_config_t;

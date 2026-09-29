@@ -25,7 +25,7 @@ size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
 /* ---- audio_output_esphome.c ---------------------------------------------- */
 /* The rest of the output backend is the upstream audio_output.h API. */
 
-void airplay_output_configure(uint32_t output_delay_us);
+void airplay_output_configure(int32_t output_delay_us);
 void airplay_output_set_active(bool active);
 void airplay_output_reset_cursor(void);
 void airplay_output_notify_played(uint32_t frames, int64_t timestamp_us);
