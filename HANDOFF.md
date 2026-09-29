@@ -2,7 +2,14 @@
 
 **Goal:** make a cheap ESP32 Sendspin speaker also show up as a **native AirPlay 2 receiver** on the iPhone. It should be multi-selectable and play in sync with HomePods and other AirPlay 2 speakers, while staying a normal Sendspin player for Music Assistant. It lives entirely in a repo David controls, as an ESPHome **external component**. No upstream PRs to ESPHome are needed.
 
-**State on 2026-09-28:** builds, not yet run on hardware. The example config compiles and links with ESPHome 2026.9.0 (ESP-IDF 5.5.5). That covers the local checkout and the `github://` source that ESPHome Builder in Home Assistant uses. All 38 `airplay_core` objects are linked into the firmware, and the AirPlay sources compile without warnings. The image is 1.6 MB, about 20% of the 16 MB layout's app partition. Next: flash it and work through milestone M1's hardware checks (§8).
+**State on 2026-09-28:** running on David's living-room board, installed from ESPHome Builder with the `github://` source.
+- **M1 done:**
+  - AirPlay 2 (buffered AAC) plays, and so does AirPlay 1 (realtime ALAC).
+  - Sendspin still works, and switching between Music Assistant and AirPlay works in both directions.
+  - A 45-minute session ran with no gaps.
+- **M2 sync verified against an Apple TV:** −1.5 ms offset and no drift, measured with `tools/click-test` (§8).
+- **Still open:** two-board sync (M2.4), M3 robustness, M4 polish.
+- **Upstream:** relicensed to GPL-3.0-or-later on its `staging` branch, which also carries the unreleased "engine v2" with changed interfaces. Re-vendoring will need porting (discussed in the session; not yet written down in detail).
 
 This document is written for whoever picks this up next (most likely Claude Code on David's machine). It records what was decided and why, and which facts were verified, so none of that needs to be rediscovered.
 
@@ -105,7 +112,8 @@ esphome-airplay/
 ├── examples/
 │   ├── living-room-sendspin-airplay.yaml
 │   └── secrets.yaml.example
-└── scripts/sync-upstream.sh       re-vendor upstream at a commit
+├── scripts/sync-upstream.sh       re-vendor upstream at a commit
+└── tools/click-test/              measure offset/drift vs another AirPlay speaker (one mic)
 ```
 
 Why vendoring and not a git submodule: ESPHome does init submodules recursively for git external components, but upstream itself has nested submodules (u8g2 and friends). Every device build would then drag those in. Vendoring the ~1 MB we need is simpler and pins exactly what we compile.
@@ -234,11 +242,16 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
    - **Measured 2026-09-28** against an **Apple TV**, which has no HomePod; its Wireless Audio Sync was calibrated first. Setup: 60 BPM metronome from Apple Music, one phone recording 23 min, ESP 3 ft and Apple TV speaker 11 ft from the mic, ESP amp muted for the last ~7 beats to identify the clicks.
    - **Method:** Apple-TV-only click template from the muted beats. In every beat, locate and subtract the Apple TV click, then locate the ESP click in the residual (band-passed cross-correlation, 1.5–8 kHz).
    - **Drift:** none. −0.4 ms/hour over 23 min, and every 1-minute median was within ±0.5 ms of the mean. The ESP crystal runs ~25 ppm fast; the position servo corrects it about once a minute, a ~2 ms peak-to-peak sawtooth.
-   - **Offset:** ESP −21.3 ms at the mic, **−14.2 ms** after the 7.1 ms distance correction, i.e. the ESP played early. Cause: our pipeline estimate read too long. ESPHome's S/PDIF path reports played frames only every 4 DMA blocks (~17.4 ms), about 8.7 ms on average; upstream also adds a 5 ms `PIPELINE_LATENCY_US` that our measured queue already contains. Fixed in the `sync-offset-fix` PR, which extrapolates `played` between reports (item 3) and subtracts the 5 ms. **Re-measure after it's merged;** the expected residual is within ~±2 ms.
+   - **Offset:** ESP −21.3 ms at the mic, **−14.2 ms** after the 7.1 ms distance correction, i.e. the ESP played early. Cause: our pipeline estimate read too long. ESPHome's S/PDIF path reports played frames only every 4 DMA blocks (~17.4 ms), about 8.7 ms on average; upstream also adds a 5 ms `PIPELINE_LATENCY_US` that our measured queue already contains. Fixed in the `sync-offset-fix` PR (#5), which extrapolates `played` between reports (item 3) and subtracts the 5 ms. (`tools/click-test` gives −13.7 ms for this same recording; its reference template uses 5 instead of 7 beats.)
+   - **Re-measured after PR #5, 2026-09-28** (same setup, 10.8 min): **−1.5 ms**, which is within the measurement error (±0.5 ft on a distance is ±0.45 ms). Drift +0.6 ms/hour. The ESP moves in a clean sawtooth between −3.5 and +0.3 ms: its crystal gets ~1.5 ms/min ahead, and every ~2.6 min the servo trims ~166 samples (3.8 ms), matching the four servo events in the log. `output_delay` stays at 0.
+   - **Long run:** 45 minutes of video audio from an Apple TV to the ESP alone, logged with the `esphome logs` loop (§11): 2,828 one-per-second Playout reports, `gaps=0 under=0`, `err` −2…+5 ms, pipeline estimate 658–696 ms, free internal heap steady at ~54 KB. Earlier reports of dropouts in a 1.5 h session (not logged) did not reproduce.
+   - **Tool:** `tools/click-test/` has the analysis script and the recording procedure.
 3. ✅ Extrapolate `played` between DMA callbacks: done in `audio_output_get_pipeline_us`, clamped to 25 ms. `output_delay` is now signed (−200…500 ms) for final fine-tuning.
 4. Two ESP32 devices + HomePod multi-selected, ~1 h. The servo should hold them without audible drift.
 
 **Done when:** it's within a few ms of a HomePod by ear with both side by side, and stays there over an hour.
+- **Status 2026-09-28:** met against an **Apple TV**: −1.5 ms, no drift over 23 + 11 minutes of click tests, plus a clean 45-minute session.
+- **Still open:** item 4, two ESP speakers plus the reference for about an hour. This needs a second board.
 
 ### M3: robustness
 - **Flush** (seek/skip/pause, `audio_output_flush`). We can't drop audio already queued in ESPHome's speaker chain. Options:
@@ -272,10 +285,10 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | 4 | **Flush / stale audio** | See M3. |
 | 5 | **Two sources of truth for volume** | The iPhone slider, the HA slider, and the player's `volume_min/max` (0.4–0.9 in this config). Mapping is linear dB→0..1, then the player's range. It may feel odd; tune in M4. |
 | 6 | **`esp_audio_codec` licence**: binary-only, "exclusively with Espressif products" | Fine for personal builds. It conflicts with plain GPL for *distributed binaries*, which is why upstream's GPL PR adds a linking exception. Don't publish binaries until that's sorted. |
-| 7 | **Upstream licence** | Currently non-commercial. PR #162 → GPL-3.0-or-later + exception (not merged as of 2026-09-28). Personal use and a public non-commercial repo are fine now. Pick our own licence (GPL-3.0-or-later is the natural fit) once #162 lands. |
+| 7 | **Upstream licence** | The vendored v0.2.1 (`main` @ `811d5f8`) is still non-commercial. PR #162 (GPL-3.0-or-later plus a `LICENSE-EXCEPTION` that explicitly permits linking Espressif binary parts such as `esp_audio_codec`) was **merged into upstream `staging` on 2026-09-20** but isn't in a release yet. Personal use and a public non-commercial repo are fine now. Pick our own licence (GPL-3.0-or-later is the natural fit) once we vendor a relicensed release. |
 | 8 | **ESPHome API churn** | `media_source` and Sendspin are new and marked experimental. Pin the ESPHome version you build with, and re-check §5 on upgrades. |
 | 9 | **Sockets estimate** | Verify with lwIP stats in M1; `media_source.py` reserves TCP 5 / UDP 6 / listen 3. |
-| 10 | **`output_delay` on this TOSLINK chain** | Measured 2026-09-28 before the offset fix: the ESP was 14 ms *early*, so our own estimate dominated, not the receiver. Re-measure after the `sync-offset-fix` PR; any residual is what `output_delay` is for (now signed). |
+| 10 | **`output_delay` on this TOSLINK chain** | Resolved for this setup. Before PR #5 the ESP was 14 ms early (our own estimate, not the receiver); after it, −1.5 ms, within measurement error, so `output_delay: 0`. Other receivers or AVRs may need a value; measure with `tools/click-test`. |
 | 11 | **Stale PTP lock at AirPlay 1 start** | Seen 2026-09-28. An AirPlay 2 client (192.168.1.39) connected and left. `ptp_clock` then reported LOCKED with an absurd offset. The next AirPlay 1 session's first anchors used PTP (`ptp_locked=1`, frames "13 years early") until the lock dropped after ~6 s and NTP took over. This is upstream behaviour, harmless once NTP takes over, but it may delay the start of AirPlay 1 playback. Revisit in M3 if it's audible. |
 
 ---
@@ -310,6 +323,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
   ```
 - The example config uses the component from the local checkout (`type: local, path: ../components`). When switching to `github://…@ref`, the whole repo (including `airplay_core/`) must be in that repo.
 - **ESPHome Builder (Home Assistant add-on)** can't see a local checkout. Paste the example with `external_components` switched to `github://davidanthoff/esphome-airplay@<ref>`, `components: [airplay]`, `refresh: 0s`. That exact variant was compiled on 2026.9.0, and `AIRPLAY_CORE_DIR` resolves inside the cloned repo. Use an add-on on 2026.9.x.
+- **Long logs:** the ESPHome Builder log view in Home Assistant stopped collecting after ~16 minutes twice, while the device kept running. For long sessions, run `esphome logs <yaml> --device <ip>` in a loop that reconnects, appending to a file (used for the 45-minute run in §8 M2).
 - Logs: the ESPHome C++ side (`airplay.media_source`) follows `logger:`. The C core and upstream (`airplay_core`, `airplay_out`, `rtsp_handlers`, `audio_timing`, …) show up under tag `esp-idf` and are gated by `esp32: framework: log_level:` (§5).
 - The device is David's living-room Sendspin speaker, so keep a known-good firmware to fall back to. The config without the `esphome-airplay` bits is his current one.
 
