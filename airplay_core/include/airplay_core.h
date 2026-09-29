@@ -80,6 +80,15 @@ typedef struct {
   const char *name;
 
   /**
+   * Model advertised in mDNS ("model", "am"); NULL: "esphome-airplay".
+   * "AudioAccessory5,1" makes iOS and Music Assistant treat the receiver as
+   * a HomePod mini (upstream's default); Music Assistant then routes volume
+   * to AirPlay even while Sendspin plays. Upstream's /info reply keeps
+   * "AudioAccessory5,1" regardless (hard-coded there).
+   */
+  const char *model;
+
+  /**
    * Fixed delay, in microseconds, that the audio chain adds AFTER the point
    * where the host reports frames as played (e.g. a TOSLINK receiver or AV
    * amplifier). The timing engine plays that much earlier to compensate.

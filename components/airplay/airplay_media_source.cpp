@@ -48,6 +48,7 @@ static void get_identity_mac(uint8_t mac[6]) {
 void AirPlayMediaSource::setup() {
   airplay_core_config_t config{};
   config.name = this->advertised_name_.c_str();
+  config.model = this->model_.c_str();
   config.output_delay_us = this->output_delay_us_;
   get_identity_mac(config.device_mac);
   std::copy(std::begin(config.device_mac), std::end(config.device_mac), this->device_mac_);
@@ -69,9 +70,10 @@ void AirPlayMediaSource::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "AirPlay Media Source:\n"
                 "  Advertised name: %s\n"
+                "  Model: %s\n"
                 "  Device id (MAC): %02X:%02X:%02X:%02X:%02X:%02X\n"
                 "  Output delay: %" PRId32 " us",
-                this->advertised_name_.c_str(), this->device_mac_[0], this->device_mac_[1], this->device_mac_[2],
+                this->advertised_name_.c_str(), this->model_.c_str(), this->device_mac_[0], this->device_mac_[1], this->device_mac_[2],
                 this->device_mac_[3], this->device_mac_[4], this->device_mac_[5], this->output_delay_us_);
 }
 

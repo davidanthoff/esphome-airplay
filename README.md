@@ -16,6 +16,7 @@ media_source:
     id: airplay_media_source
     # name: Living Room          # defaults to the node's friendly_name
     # output_delay: 0ms          # latency added after the ESP32 (TOSLINK receiver, AVR); negative = play later
+    # model: esphome-airplay     # advertised over mDNS; see below
 
 media_player:
   - platform: speaker_source
@@ -27,6 +28,8 @@ media_player:
 ```
 
 Requirements: ESP32 (S3 with PSRAM recommended), ESP-IDF framework, ESPHome ≥ 2026.9.
+
+**`model`:** cosmetic. `model: "AudioAccessory5,1"` makes iOS show a HomePod mini icon. The receiver always advertises `manufacturer=ESPHome` as well, so Music Assistant never mistakes it for a real HomePod. If it did, MA would send all volume changes over AirPlay, even while Sendspin is playing.
 
 ## Licence
 

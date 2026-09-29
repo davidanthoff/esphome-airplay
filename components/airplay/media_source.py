@@ -9,7 +9,7 @@ from pathlib import Path
 import esphome.codegen as cg
 from esphome.components import esp32, media_source, network, socket, wifi
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_NAME
+from esphome.const import CONF_ID, CONF_MODEL, CONF_NAME
 from esphome.core import CORE
 from esphome.types import ConfigType
 
@@ -68,6 +68,15 @@ CONFIG_SCHEMA = cv.All(
         {
             # Name in the iOS AirPlay picker. Defaults to the node's friendly_name.
             cv.Optional(CONF_NAME): cv.All(cv.string_strict, cv.Length(max=64)),
+            # Model advertised over mDNS (TXT "model" / "am"). Cosmetic:
+            # "AudioAccessory5,1" (upstream's default) gets the HomePod mini
+            # icon in iOS. The mDNS glue also sends manufacturer=ESPHome, which
+            # keeps Music Assistant from treating the receiver as a real HomePod
+            # (see mdns_airplay_esphome.c). Default follows shairport-sync's
+            # neutral "ShairportSync".
+            cv.Optional(CONF_MODEL, default="esphome-airplay"): cv.All(
+                cv.string_strict, cv.Length(min=1, max=32)
+            ),
             # Delay added AFTER the ESP32 (TOSLINK receiver, AVR DSP). The timing
             # engine plays this much earlier. Negative values make it play
             # later. Tune against another AirPlay 2 speaker (HomePod, Apple TV).
@@ -110,6 +119,7 @@ async def to_code(config: ConfigType) -> None:
 
     name = config.get(CONF_NAME) or CORE.friendly_name or CORE.name
     cg.add(var.set_advertised_name(name))
+    cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_output_delay_us(config[CONF_OUTPUT_DELAY].total_microseconds))
 
     # The AirPlay protocol stack: vendored airplay-esp32 + C glue, built as a
