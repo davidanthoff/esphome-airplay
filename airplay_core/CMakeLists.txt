@@ -86,6 +86,8 @@ idf_component_register(
         esp_event
         esp_timer
         heap
+        libsodium         # ESPHome's esphome/libsodium, added by media_source.py
+        airplay_sodium    # the libsodium modules ESPHome's port leaves out (../airplay_sodium)
         esp_http_client   # dacp_client.c (AirPlay 1 remote control)
         mbedtls
         lwip
