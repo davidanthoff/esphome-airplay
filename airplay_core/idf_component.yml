@@ -6,13 +6,12 @@ dependencies:
   # ESPHome 2026.9's mdns component pins espressif/mdns 1.12.0, which
   # satisfies this range, so both resolve to one copy.
   espressif/mdns: "^1.11.1"
-  # KNOWN RISK (M1): with `api: encryption:` configured, ESPHome's noise
-  # component links esphome/libsodium 1.10021.11 (a PlatformIO port of
-  # libsodium 1.0.21). That and espressif/libsodium would be two copies of the
-  # same symbols. The example config has no API encryption, so M1 is not
-  # affected. If the link fails once encryption is on, drop this line and
-  # build against ESPHome's copy instead.
-  espressif/libsodium: "^1.0.21"
+  # libsodium is deliberately NOT listed here. Upstream uses espressif/libsodium,
+  # but with `api: encryption:` ESPHome's noise component brings its own port
+  # (esphome/libsodium, also libsodium 1.0.21), and ESP-IDF refuses to build
+  # with both ("Requirement espressif__libsodium and requirement libsodium are
+  # both added"). components/airplay/media_source.py always adds ESPHome's
+  # copy, and CMakeLists.txt requires it as `libsodium`.
   # ALAC + AAC decoders. Binary-only, licensed for use with Espressif chips
   # only. Fine for a personal build; see HANDOFF.md "Licensing" before
   # distributing binaries.

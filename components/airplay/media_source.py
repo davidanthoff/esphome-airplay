@@ -33,6 +33,7 @@ AirPlayMediaSource = airplay_ns.class_(
 # ESPHome clones the whole repository for external_components, so the sibling
 # directory is present next to components/ both for git and local sources.
 AIRPLAY_CORE_DIR = Path(__file__).resolve().parents[2] / "airplay_core"
+AIRPLAY_SODIUM_DIR = Path(__file__).resolve().parents[2] / "airplay_sodium"
 
 
 def _consume_sockets(config: ConfigType) -> ConfigType:
@@ -116,6 +117,17 @@ async def to_code(config: ConfigType) -> None:
     # into the project's idf_component.yml as a `path:` dependency and adds it
     # to the main component's REQUIRES, so airplay_core.h is on the include path.
     esp32.add_idf_component(name="airplay_core", path=str(AIRPLAY_CORE_DIR))
+
+    # libsodium for the AirPlay crypto (HAP, ChaCha20-Poly1305, Ed25519,
+    # SHA-512). Use the same port and version as ESPHome's noise component
+    # (components/noise/__init__.py, 2026.9) rather than espressif/libsodium:
+    # with `api: encryption:` both would be in the build, and ESP-IDF refuses
+    # to pick one. Declared here too so it is present without API encryption.
+    # Re-check the version when upgrading ESPHome.
+    cg.add_library("esphome/libsodium", "1.10021.11")
+    # ESPHome's port compiles only what noise needs; airplay_sodium compiles the
+    # modules AirPlay needs on top, from the same source tree.
+    esp32.add_idf_component(name="airplay_sodium", path=str(AIRPLAY_SODIUM_DIR))
 
     # Kconfig symbols declared in airplay_core/Kconfig (same names as upstream).
     esp32.add_idf_sdkconfig_option(

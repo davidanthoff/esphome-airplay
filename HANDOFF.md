@@ -103,12 +103,13 @@ esphome-airplay/
 │   └── airplay_media_source.cpp   state machine, write path, volume, trampolines
 ├── airplay_core/                  ESP-IDF component
 │   ├── CMakeLists.txt             which upstream files are compiled / replaced
-│   ├── idf_component.yml          espressif/mdns, libsodium, esp_audio_codec
+│   ├── idf_component.yml          espressif/mdns, esp_audio_codec (libsodium: see airplay_sodium/)
 │   ├── Kconfig                    upstream symbol names (AIRPLAY_FORCE_V1, …)
 │   ├── UPSTREAM.md                pinned commit + licence notes
 │   ├── include/airplay_core.h     the C API between core and ESPHome
 │   ├── src/                       our glue (see §3)
 │   └── upstream/                  vendored airplay-esp32 (main/, components/dac/, LICENSE) – never edit
+├── airplay_sodium/                ESP-IDF component: libsodium modules ESPHome's port leaves out (§5, noise)
 ├── examples/
 │   ├── living-room-sendspin-airplay.yaml
 │   └── secrets.yaml.example
@@ -154,7 +155,15 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - `consume_sockets(n, name, SocketType.TCP|UDP|TCP_LISTEN)`. With our estimates, ESPHome computed `CONFIG_LWIP_MAX_SOCKETS=27` for David's config.
 
 **`noise/__init__.py`**
-- With `api: encryption:`, ESPHome links `esphome/libsodium 1.10021.11`. David's config has no API encryption. See the risks section (§9).
+- **With `api: encryption:`,** ESPHome adds `esphome/libsodium 1.10021.11`, a port of libsodium 1.0.21 that shows up in the build as a component named **`libsodium`**.
+  - **It can't coexist with `espressif/libsodium`.** CMake fails with "Requirement espressif__libsodium and requirement libsodium are both added as project_managed_components. Can't decide which one to pick." This broke David's ESPHome Builder install on 2026-09-28: his Home Assistant YAML has API encryption, the example didn't.
+  - **The port ships the full libsodium source tree but compiles only what noise needs** (a `srcFilter` in its `library.json`): ChaCha20-Poly1305, X25519, SHA-256, Salsa/ChaCha streams, codecs. It has **no** SHA-512, HMAC-SHA512, Ed25519 signing or `crypto_box`, all of which HAP pairing needs.
+  - **Our solution:**
+    - `media_source.py` always adds `esphome/libsodium` (same version as noise, so they dedupe).
+    - `airplay_core/idf_component.yml` no longer lists `espressif/libsodium`.
+    - **`airplay_sodium/`** compiles exactly the missing modules from the port's own source tree, found via `idf_component_get_property(… libsodium COMPONENT_DIR)`. The port's include paths and `-DCONFIGURED=1` are public.
+    - Verified by building with and without API encryption: one libsodium, each `crypto_*` symbol defined once, firmware ~50 KB smaller.
+  - **Re-check the version pin when upgrading ESPHome.**
 
 **Framework**
 - Only ESP-IDF. The component is `only_on_esp32`, and upstream needs IDF ≥ 5.5.
@@ -297,7 +306,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 
 | # | Risk | Notes / mitigation |
 |---|---|---|
-| 1 | **libsodium duplicate** if API encryption is enabled | Remove `espressif/libsodium` from `airplay_core/idf_component.yml` and rely on ESPHome's; both are 1.0.21. Not an issue for the example config. |
+| 1 | **libsodium duplicate** if API encryption is enabled | **Hit and resolved 2026-09-28:** we always use ESPHome's `esphome/libsodium`, plus `airplay_sodium/` for the modules its port leaves out (§5, noise). Builds with and without API encryption. Re-check on ESPHome upgrades: the version pin in `media_source.py`, and whether the port's `srcFilter` changed. |
 | 2 | **CPU starvation**: playback task at priority 9 | Upstream needs it above its receiver tasks. ESPHome's loop runs at priority 1, and i2s/mixer/resampler tasks have their own priorities. Watch for ESPHome loop lag and task WDT. The task mostly blocks in `write_output`. If needed, lower all of airplay's tasks together rather than just this one. |
 | 3 | **Memory** | PSRAM is not the problem; upstream's jitter buffer asks for PSRAM explicitly. **Internal RAM is.** First hardware run (Wi-Fi, speaker chain started): ~62 KB free, 31 KB largest block. Upstream expects every `malloc` above 1 KB to go to PSRAM, but under ESPHome they all go to internal RAM (§5). The codec is redirected by `codec_alloc_psram.c`. If other upstream allocations fail (pairing, plist, the realtime path), options are: redirect more of them the same way; set `CONFIG_SPIRAM_USE_MALLOC` + `ALWAYSINTERNAL=1024` globally (changes ESPHome's behaviour, test Sendspin too); or shrink the speaker chain. |
 | 4 | **Flush / stale audio** | See M3. |
