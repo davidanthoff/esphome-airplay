@@ -18,6 +18,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 
+#include "airplay_sodium.h"
+
 /* upstream headers (vendored under upstream/main) */
 #include "audio_output.h"
 #include "audio_receiver.h"
@@ -125,6 +127,11 @@ esp_err_t airplay_core_init(const airplay_core_config_t *config) {
    * not collide with ESPHome's. */
   /* Before anything upstream can ask for the device id (settings, HAP, mDNS). */
   airplay_core_set_device_mac(config->device_mac);
+
+  /* Before hap_init() calls sodium_init(): ESPHome's libsodium port would
+   * otherwise read /dev/urandom, which ESP-IDF lacks, and abort the firmware
+   * (see airplay_sodium/randombytes_esp32.c). */
+  airplay_sodium_use_esp32_random();
 
   ESP_RETURN_ON_ERROR(settings_init(), TAG, "settings_init failed");
 

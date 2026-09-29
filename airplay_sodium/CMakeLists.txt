@@ -15,7 +15,7 @@
 # Include paths and -DCONFIGURED=1 come PUBLIC from the libsodium component.
 
 if(CMAKE_BUILD_EARLY_EXPANSION)
-    idf_component_register(REQUIRES libsodium)
+    idf_component_register(REQUIRES libsodium esp_hw_support)
     return()
 endif()
 
@@ -42,7 +42,11 @@ idf_component_register(
         ${S}/crypto_core/hsalsa20/core_hsalsa20.c
         ${S}/crypto_core/hsalsa20/ref2/core_hsalsa20_ref2.c
         ${S}/crypto_stream/xsalsa20/stream_xsalsa20.c
-    REQUIRES libsodium
+        # The ESP32 hardware RNG as libsodium's random source: the port's
+        # default reads /dev/urandom, which ESP-IDF lacks, and aborts.
+        randombytes_esp32.c
+    INCLUDE_DIRS include
+    REQUIRES libsodium esp_hw_support
 )
 
 # Same warning suppressions as ESPHome's port uses for libsodium sources.
