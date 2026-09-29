@@ -168,6 +168,19 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - Upstream airplay-esp32 assumes the opposite. Its `config/sdkconfig.defaults` has `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024` (every `malloc` above 1 KB goes to PSRAM) and `CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y`.
 - Consequence, seen on hardware: `esp_audio_codec`'s AAC decoder couldn't open ("There is no enough memory for AAC buffer"), so AirPlay played silence. Internal RAM was ~60 KB free with a largest block of 31 KB once the speaker chain was running. Fixed by `src/codec_alloc_psram.c`, which overrides the codec's weak `media_lib_module_malloc/calloc` with upstream's 1 KB rule. Upstream's own plain `malloc`s still go to internal RAM (§9).
 
+**`sendspin/sendspin_hub.cpp`: the Sendspin client id is a MAC**
+- `get_client_id_into_buffer()` returns the **Ethernet MAC whenever `ethernet:` is configured** (on the ESP32-S3 that's the base MAC + 3), otherwise the base MAC.
+- The code comment says the server "matches client_id against the L2 source MAC of the device's multicast traffic". On a board with `ethernet:` configured that is running on Wi-Fi, even ESPHome's own id doesn't match the traffic.
+- David's board: Sendspin reports `…:B5:77` (Ethernet), while upstream AirPlay reported `…:B5:74` (Wi-Fi STA).
+
+**Music Assistant: how it sees this device** (checked 2026-09-28 in music-assistant/server `main`)
+- **Merging:** protocol players of one physical device (AirPlay, Chromecast, DLNA, Sendspin, Squeezelite) are merged into a "Universal Player". It matches by MAC first, then UUID, AirPlay or Cast id, and IP only as a last resort. Players of the *same* protocol are never merged. (`controllers/players/README.md`)
+- **Before the device-MAC change:** because of the MAC mismatch above, David's Music Assistant showed **two players**:
+  1. "Sendspin TOSLINK, Apple / HomePod Mini": our AirPlay receiver, discovered by Music Assistant's AirPlay provider, plus **"Sendspin (over AirPlay)"**, which is Music Assistant's own Sendspin *bridge* that plays to AirPlay devices.
+  2. "Sendspin TOSLINK 54b574": the ESP's native Sendspin.
+- **Preferred output protocol:** Music Assistant defaulted the merged player to **AirPlay**. With AirPlay and native Sendspin merged, set it to **Sendspin**. Otherwise Music Assistant plays to the ESP *via AirPlay*.
+- **External sources:** Music Assistant only surfaces them (state, metadata, forwarded pause/next/seek) from **Chromecast and DLNA** protocol players, and only for sources in a fixed list of streaming services (`EXTERNAL_SOURCE_PROTOCOLS`, `EXTERNAL_SOURCES` in `models/protocol_backed_player.py` and `constants.py`). Sendspin's `external_source` and AirPlay aren't among them.
+
 **`wifi/`: power save while streaming**
 - With the default `power_save_mode`, the station sits in `WIFI_PS_MIN_MODEM` (the log shows `Set ps type: 1`). Streaming components switch it off at runtime:
   - Python: `wifi.enable_runtime_power_save_control()` and `wifi.enable_runtime_roaming_suppression()`.
@@ -186,7 +199,11 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - **Bring-up** (`main.c: start_airplay_services`): `ptp_clock_init → hap_init → audio_receiver_init → audio_output_init → mdns_airplay_init → audio_output_start → rtsp_server_start`. Before that, `settings_init` and `playback_control_init` run. Mirrored in `src/airplay_core.c`.
 - **Compiled set:** listed in `airplay_core/CMakeLists.txt`. It references only `audio_output_*` from the output API, so there are no dependencies on led/wifi/display/web code. Checked by grep.
 - **Replaced:** `main.c`, `network/mdns_airplay.c` (it calls `mdns_init`), `audio/audio_output*.c`, `audio/audio_resample.c` (ESPHome's resampler speaker does this job).
-- **Device identity:** `esp_read_mac(ESP_MAC_WIFI_STA)` is used everywhere (rtsp_handlers, hap_pair_verify, mdns). That's fine on Ethernet too, because it just needs to be stable and consistent.
+- **Device identity:** upstream uses `esp_read_mac(ESP_MAC_WIFI_STA)` everywhere: `rtsp_handlers.c` (twice), `hap_pair_verify.c`, `settings.c` and `mdns_airplay.c`.
+  - **In our build,** those calls are redirected (`CMakeLists.txt`: `esp_read_mac=airplay_core_read_mac` for upstream sources only, implemented in `src/device_mac.c`). They return the **same MAC ESPHome's Sendspin hub reports**, so Music Assistant can merge both into one player (see §5, "Music Assistant").
+  - Other MAC types, and all non-upstream code, still get the real values. `nm` confirms that only `device_mac.c.obj` references `esp_read_mac` directly.
+  - **Changing the identity** makes iOS and Music Assistant see a "new" AirPlay device once: the old entry (e.g. Music Assistant's `ap28848554b574`) goes stale and can be removed.
+- **Advertised model:** `AudioAccessory5,1`, the **HomePod mini** identifier, so iOS shows a speaker icon. Music Assistant therefore labels the device "Apple / HomePod Mini". Whether a different model string changes how iOS treats the receiver is untested.
 - **Persistence:** NVS namespace `"airplay"` holds the device name, volume, HAP pairing keys and so on. It doesn't collide with ESPHome, which already ran `nvs_flash_init`. `rtsp_handlers.c` `/info` reads the name from settings, so `airplay_core_init()` writes the configured name there when it changed.
 - **Output timing contract:** `FRAME_SAMPLES = 352`. The playback task priority `AUDIO_PLAYBACK_TASK_PRIORITY = 9` must outrank the receiver tasks (8/7/5), otherwise playback drifts late (upstream issue #122). **Task stacks must stay in internal RAM** (`spiram_task.h`: flash ops disable the cache).
 - **Timing engine knobs:** `CONFIG_AIRPLAY_TIMING_THRESHOLD_MS` (buffered AAC, default 25) and `CONFIG_AIRPLAY_RT_TIMING_THRESHOLD_MS` (realtime ALAC, default 50). The `rtsp_handlers.c` comment says: **do not** advertise output latency to the sender, because the engine compensates internally and advertising would apply it twice.
@@ -205,6 +222,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | `airplay_core/src/airplay_core.c` | 🟡 compiles and links, no warnings. Not yet run on hardware |
 | `airplay_core/src/audio_output_esphome.c` | 🟡 same. **This is where M2 happens** |
 | `airplay_core/src/mdns_airplay_esphome.c` | ✅ on hardware: the iPhone lists the device and pairs. TXT records copied 1:1 from upstream |
+| `airplay_core/src/device_mac.c` | 🟡 AirPlay device id = the Sendspin hub's MAC (§6). Built and redirect verified with `nm`; not yet on hardware |
 | `airplay_core/src/codec_alloc_psram.c` | 🟡 puts the AAC/ALAC decoders' memory in PSRAM (§5). Linked, as `nm` confirms; not yet tried on hardware |
 | `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ CMake and the component manager resolve them on 2026.9.0 with no changes needed. `espressif/mdns` is deduplicated with ESPHome's 1.12.0 |
 | `airplay_core/upstream/` | ✅ vendored by `scripts/sync-upstream.sh`. All 35 listed files compile without warnings |

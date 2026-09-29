@@ -123,6 +123,9 @@ esp_err_t airplay_core_init(const airplay_core_config_t *config) {
   /* NVS is already initialised by ESPHome. Upstream keeps its own data
    * (pairing keys, volume, name) in the "airplay" NVS namespace, which does
    * not collide with ESPHome's. */
+  /* Before anything upstream can ask for the device id (settings, HAP, mDNS). */
+  airplay_core_set_device_mac(config->device_mac);
+
   ESP_RETURN_ON_ERROR(settings_init(), TAG, "settings_init failed");
 
   /* rtsp_handlers.c (/info) and mdns read the name from settings. Only write

@@ -85,6 +85,8 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
 
   std::string advertised_name_;
   int32_t output_delay_us_{0};
+  /// AirPlay device id; the same MAC ESPHome's Sendspin hub reports.
+  uint8_t device_mac_[6]{};
 
   bool core_started_{false};
   /// Set when we asked the player to start us and play_uri() has not come
