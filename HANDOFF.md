@@ -163,6 +163,13 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
     - `airplay_core/idf_component.yml` no longer lists `espressif/libsodium`.
     - **`airplay_sodium/`** compiles exactly the missing modules from the port's own source tree, found via `idf_component_get_property(… libsodium COMPONENT_DIR)`. The port's include paths and `-DCONFIGURED=1` are public.
     - Verified by building with and without API encryption: one libsodium, each `crypto_*` symbol defined once, firmware ~50 KB smaller.
+  - **Random numbers (a crash found on hardware 2026-09-28):**
+    - The port keeps libsodium's default randombytes backend, `sysrandom`, which reads **`/dev/urandom`**. `getrandom()` isn't enabled in the port, and ESP-IDF has no `/dev/urandom`.
+    - So the first randombytes call, already inside `sodium_init()` (called from upstream `hap_init()`), makes libsodium **abort on purpose** (`sodium_misuse()`).
+    - noise-c never hits this because it has its own RNG. `espressif/libsodium` avoids it with `port/randombytes_esp32.c` as its compiled-in default.
+    - **Symptom:** every OTA of the PR #7/#8 firmware panicked a few seconds after boot, and the bootloader rolled it back. The log showed `OTA rollback detected! Rolled back from partition 'app1'`, `Reset Reason: exception/panic`, and the old "compiled on" timestamp. ESPHome Builder kept offering the update.
+    - **Fix:** `airplay_sodium/randombytes_esp32.c` (hardware RNG via `esp_random` / `esp_fill_random`), installed with `randombytes_set_implementation()` in `airplay_core_init()`, before `sodium_init()`.
+    - The rest of `sodium_init()` is fine on this port: it has stubs for the argon2/blake2b/aegis "pick best implementation" calls, and the alloc init only needs randombytes.
   - **Re-check the version pin when upgrading ESPHome.**
 
 **Framework**
@@ -351,6 +358,9 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - The example config uses the component from the local checkout (`type: local, path: ../components`). When switching to `github://…@ref`, the whole repo (including `airplay_core/`) must be in that repo.
 - **ESPHome Builder (Home Assistant add-on)** can't see a local checkout. Paste the example with `external_components` switched to `github://davidanthoff/esphome-airplay@<ref>`, `components: [airplay]`, `refresh: 0s`. That exact variant was compiled on 2026.9.0, and `AIRPLAY_CORE_DIR` resolves inside the cloned repo. Use an add-on on 2026.9.x.
 - **Long logs:** the ESPHome Builder log view in Home Assistant stopped collecting after ~16 minutes twice, while the device kept running. For long sessions, run `esphome logs <yaml> --device <ip>` in a loop that reconnects, appending to a file (used for the 45-minute run in §8 M2).
+- **"Update available" after every install means the new firmware crashed and was rolled back.** A firmware that panics before `safe_mode` marks the boot successful (60 s) is rolled back by the bootloader. The device then reports the old build, so ESPHome Builder offers the update again.
+  - Check the startup log for `OTA rollback detected! Rolled back from partition …`, `Reset Reason: exception/panic` and the `compiled on` timestamp.
+  - The crash itself happens before the API log connection is up, so a backtrace needs the USB serial console.
 - Logs: the ESPHome C++ side (`airplay.media_source`) follows `logger:`. The C core and upstream (`airplay_core`, `airplay_out`, `rtsp_handlers`, `audio_timing`, …) show up under tag `esp-idf` and are gated by `esp32: framework: log_level:` (§5).
 - The device is David's living-room Sendspin speaker, so keep a known-good firmware to fall back to. The config without the `esphome-airplay` bits is his current one.
 
