@@ -91,6 +91,9 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
   /// yet. Same dedup/race guard as SendspinMediaSource::pending_start_: the
   /// player may send STOP to a busy source before calling play_uri().
   bool pending_start_{false};
+  /// Set by play_uri(); loop() then resets the output cursor and starts
+  /// writing (see the comment in play_uri()).
+  bool start_output_pending_{false};
   /// Last volume we pushed to the player from the sender, to avoid echoing it.
   float last_sender_volume_{-1.0f};
 };

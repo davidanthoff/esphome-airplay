@@ -126,6 +126,8 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - A source becomes the active source when it reports PLAYING. `write_audio` from a non-active source just sleeps for `timeout_ms` and returns 0.
 - **The first write after a stream-format change returns 0**: the speaker is reconfigured and the call sleeps `timeout_ms`. The writer has to retry the same data.
 - `notify_audio_played` is called only on the **active** source, only for frames that source wrote (CAS on `pending_frames`), from the **speaker callback task**.
+- **Order matters for latency accounting.** `set_state_(PLAYING)` inside `play_uri()` makes the source active immediately, but `pending_frames` is reset to 0 only *after* `play_uri()` returns (`try_execute_play_uri_`). Frames written in between are never reported as played. So the AirPlay source starts writing, and resets its own cursor, in the next `loop()`.
+- **PAUSED does not stop the speaker chain.** The source stays active, so played-frame reports keep arriving while the chain drains. The chain stops by itself about 1 s after the last write. Resetting our submitted/played cursor on a quick pause → resume would count still-playing old audio against a zeroed "submitted": the queue then reads too short, and everything plays late for the rest of the session. `audio_output_esphome.c` resets on resume only after ≥1.5 s without played frames.
 - When a source goes IDLE *without* the player having stopped it, the player advances its playlist. That's why smart sources return `has_internal_playlist() = true`.
 - Sendspin's source (`sendspin/media_source/sendspin_media_source.cpp`) is the **reference implementation** for everything here, including the `pending_start_` guard ("the orchestrator may send a stop command before play_uri").
 
@@ -225,6 +227,9 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 
 ### M2: sync
 1. Log `audio_output_get_pipeline_us()` and the timing engine's servo stats (`audio_timing.c`: `pos_err_filtered_us`, `servo_trims`, late drops) once a second. Check that pipeline_us is stable and plausible, i.e. roughly the resampler+mixer+DMA buffering.
+   - Upstream already logs `audio_time: Playout: err=… depth=…` once a second and the servo engage/disengage lines. `airplay_out` now logs `pipeline=… ms submitted=… played=…` every 10 s.
+   - `err` is measured against the engine's own pipeline estimate. A wrong estimate is therefore invisible in `err` and shows up only as a constant offset against another speaker.
+   - 2026-09-28: David once heard the ESP clearly out of sync with an Apple TV after switching songs. The likely cause was the cursor reset on pause/resume described in §5, fixed in the `output-cursor-fix` PR. Confirm with the microphone test.
 2. Multi-select this device + a **HomePod** on the iPhone. Measure the offset: record both with one phone mic and cross-correlate a click track (e.g. Audacity), or listen for flanging with both close together. Set `output_delay` to the TOSLINK receiver's/AVR's latency; many AVRs have a known "audio delay" in their menus.
 3. Optional refinement: extrapolate `played` between DMA callbacks (TODO in `audio_output_get_pipeline_us`).
 4. Two ESP32 devices + HomePod multi-selected, ~1 h. The servo should hold them without audible drift.

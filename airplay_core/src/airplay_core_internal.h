@@ -27,6 +27,7 @@ size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
 
 void airplay_output_configure(uint32_t output_delay_us);
 void airplay_output_set_active(bool active);
+void airplay_output_reset_cursor(void);
 void airplay_output_notify_played(uint32_t frames, int64_t timestamp_us);
 
 /* ---- mdns_airplay_esphome.c ---------------------------------------------- */

@@ -22,11 +22,12 @@
  * delay after the ESP32 (TOSLINK receiver, amp DSP) is not, which is what
  * output_delay_us is for.
  *
- * STATUS: scaffold, not yet built. See HANDOFF.md milestones M1-M2.
+ * STATUS: plays on hardware (M1). Sync accuracy is milestone M2 (HANDOFF.md).
  */
 
 #include "audio_output.h"
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -54,6 +55,15 @@ static const char *TAG = "airplay_out";
 #define HOST_NOMINAL_LATENCY_US 100000
 
 #define PLAYBACK_TASK_STACK 4096
+
+/* On resume after a pause, keep the cursor unless nothing has been played for
+ * this long. By then the speaker chain (resampler + mixer + I2S, ~0.7 s of
+ * buffering plus their idle timeouts) has certainly drained, so any frames it
+ * never reported as played were dropped and must not count as queued. */
+#define CURSOR_IDLE_RESET_US 1500000
+
+/* Period of the pipeline diagnostic log line while output is active. */
+#define PIPELINE_LOG_INTERVAL_US 10000000
 
 static TaskHandle_t s_task = NULL;
 static volatile bool s_running = false;
@@ -110,6 +120,7 @@ static void playback_task(void *arg) {
     return;
   }
 
+  int64_t last_log_us = 0;
   while (s_running) {
     if (!s_active) {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -123,6 +134,18 @@ static void playback_task(void *arg) {
        * MediaSource API. Right now stale audio (up to the chain's buffer
        * depth) plays out after a seek/pause and the timing engine drops the
        * late frames that follow. Options are in HANDOFF.md ("Flush"). */
+    }
+
+    int64_t now_us = esp_timer_get_time();
+    if (now_us - last_log_us >= PIPELINE_LOG_INTERVAL_US) {
+      last_log_us = now_us;
+      uint32_t pipeline_us = 0;
+      bool measured = audio_output_get_pipeline_us(NULL, &pipeline_us);
+      ESP_LOGI(TAG, "pipeline=%" PRIu32 " ms (%s) submitted=%" PRIu64
+               " played=%" PRIu64,
+               pipeline_us / 1000, measured ? "measured" : "no feedback yet",
+               __atomic_load_n(&s_submitted_frames, __ATOMIC_RELAXED),
+               __atomic_load_n(&s_played_frames, __ATOMIC_RELAXED));
     }
 
     uint32_t rate = (uint32_t)s_source_rate;
@@ -151,11 +174,25 @@ void airplay_output_configure(uint32_t output_delay_us) {
 
 void airplay_output_set_active(bool active) {
   if (active && !s_active) {
-    /* speaker_source resets its pending-frame counter whenever a source
-     * (re)starts, so start our cursor from zero at the same moment. */
-    reset_cursor();
+    /* Resume after a pause. Do NOT simply reset: after a quick pause/resume
+     * (Apple Music does one on many track changes) the speaker chain is still
+     * playing out up to ~0.7 s of earlier audio. Its played-frame reports
+     * would then count against a zeroed "submitted", the queue would read as
+     * empty while it is not, and every later frame would play that much late
+     * for the rest of the session. Only reset once the chain has gone idle. */
+    int64_t last = __atomic_load_n(&s_last_played_us, __ATOMIC_RELAXED);
+    if (last != 0 && esp_timer_get_time() - last > CURSOR_IDLE_RESET_US) {
+      reset_cursor();
+    }
   }
   s_active = active;
+}
+
+void airplay_output_reset_cursor(void) {
+  /* New playback: the host (speaker_source) has just reset its own
+   * pending-frame counter, so from here on it reports exactly the frames we
+   * write. Start from zero at the same point. */
+  reset_cursor();
 }
 
 void airplay_output_notify_played(uint32_t frames, int64_t timestamp_us) {
