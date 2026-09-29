@@ -48,8 +48,19 @@ static const char *TAG = "mdns_airplay";
 #define AIRPLAY_METADATA_TYPES "0,2"
 #endif
 
-/* Shows up as a speaker (HomePod mini) in the iOS picker. */
-#define AIRPLAY_MODEL "AudioAccessory5,1"
+/* Model: configurable (airplay_core_get_model(), default "esphome-airplay").
+ * Upstream advertises "AudioAccessory5,1", the HomePod mini, for the speaker
+ * icon in iOS. Music Assistant maps that to "Apple / HomePod Mini", registers
+ * the receiver as a native Apple player and then sends ALL volume changes to
+ * AirPlay, even while Sendspin plays. shairport-sync advertises its own model
+ * ("ShairportSync") and iOS treats it as a normal AirPlay 2 speaker.
+ *
+ * Manufacturer: not something iOS needs, but Music Assistant uses
+ * manufacturer + model verbatim when both are present, and only treats
+ * "Apple" + HomePod/Apple TV as a native Apple device. So this keeps Music
+ * Assistant treating AirPlay as one protocol next to Sendspin even if the
+ * model is set back to "AudioAccessory5,1". */
+#define AIRPLAY_MANUFACTURER "ESPHome"
 
 void mdns_airplay_init(void) {
   char device_id[18];
@@ -82,7 +93,8 @@ void mdns_airplay_init(void) {
       {"deviceid", device_id},
       {"features", features_str},
       {"flags", AIRPLAY_FLAGS},
-      {"model", AIRPLAY_MODEL},
+      {"model", airplay_core_get_model()},
+      {"manufacturer", AIRPLAY_MANUFACTURER},
       {"pk", pk_str},
       {"pi", "00000000-0000-0000-0000-000000000000"},
       {"srcvers", AIRPLAY_SOURCE_VERSION},
@@ -99,7 +111,9 @@ void mdns_airplay_init(void) {
 
 #ifdef CONFIG_AIRPLAY_FORCE_V1
   mdns_txt_item_t raop_txt[] = {
-      {"am", AIRPLAY_MODEL}, {"tp", "UDP"},       {"sm", "false"},
+      {"am", airplay_core_get_model()},
+      {"manufacturer", AIRPLAY_MANUFACTURER},
+      {"tp", "UDP"},         {"sm", "false"},
       {"sv", "false"},       {"ek", "1"},         {"et", "0,1"},
       {"md", AIRPLAY_METADATA_TYPES},             {"cn", "0,1"},
       {"ch", "2"},           {"ss", "16"},        {"sr", "44100"},
@@ -107,7 +121,8 @@ void mdns_airplay_init(void) {
   };
 #else
   mdns_txt_item_t raop_txt[] = {
-      {"am", AIRPLAY_MODEL},
+      {"am", airplay_core_get_model()},
+      {"manufacturer", AIRPLAY_MANUFACTURER},
       {"cn", "0,1,2,3"},
       {"da", "true"},
       {"ek", "1"},

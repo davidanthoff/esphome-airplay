@@ -37,11 +37,13 @@ static const char *TAG = "airplay_core";
 
 static airplay_core_config_t s_config;
 static char s_name[65];
+static char s_model[33] = "esphome-airplay";
 static bool s_initialized = false;
 static bool s_infra_started = false; /* PTP/HAP/receiver: once per boot */
 static bool s_running = false;
 
 const char *airplay_core_get_name(void) { return s_name; }
+const char *airplay_core_get_model(void) { return s_model; }
 
 size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
                                uint32_t sample_rate, uint32_t timeout_ms) {
@@ -121,6 +123,11 @@ esp_err_t airplay_core_init(const airplay_core_config_t *config) {
   s_config = *config;
   strncpy(s_name, config->name, sizeof(s_name) - 1);
   s_config.name = s_name;
+  if (config->model != NULL && config->model[0] != '\0') {
+    strncpy(s_model, config->model, sizeof(s_model) - 1);
+    s_model[sizeof(s_model) - 1] = '\0';
+  }
+  s_config.model = s_model;
 
   /* NVS is already initialised by ESPHome. Upstream keeps its own data
    * (pairing keys, volume, name) in the "airplay" NVS namespace, which does

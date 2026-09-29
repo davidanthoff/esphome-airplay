@@ -21,6 +21,9 @@ extern "C" {
 /** Name from airplay_core_config_t, owned by airplay_core.c. */
 const char *airplay_core_get_name(void);
 
+/** Model advertised in mDNS, from airplay_core_config_t.model. */
+const char *airplay_core_get_model(void);
+
 /** Forward PCM to the host (wraps airplay_core_host_t.write). */
 size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
                                uint32_t sample_rate, uint32_t timeout_ms);
