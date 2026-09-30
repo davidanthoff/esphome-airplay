@@ -52,6 +52,30 @@ def _consume_sockets(config: ConfigType) -> ConfigType:
     return config
 
 
+def _default_name(config: ConfigType) -> ConfigType:
+    """Default the AirPlay name to "<area> <friendly_name>".
+
+    CORE.area and CORE.friendly_name are set by preload_core_config() before any
+    component is validated (esphome/core/config.py, 2026.9). The area is left
+    out when there is none, or when the friendly name already starts with it
+    ("Dining Room" + "Dining Room Speakers" stays "Dining Room Speakers").
+    """
+    if CONF_NAME in config:
+        return config
+    name = CORE.friendly_name or CORE.name
+    area = CORE.area
+    if area and not f"{name} ".lower().startswith(f"{area} ".lower()):
+        name = f"{area} {name}"
+    if len(name) > 64:
+        raise cv.Invalid(
+            f"Default AirPlay name '{name}' is longer than 64 characters; "
+            "set 'name' explicitly",
+            [CONF_NAME],
+        )
+    config[CONF_NAME] = name
+    return config
+
+
 def _request_networking(config: ConfigType) -> ConfigType:
     # Same as Sendspin: bigger lwIP buffers for streaming audio, and the
     # runtime WiFi APIs the C++ side uses to switch power save off and pause
@@ -67,7 +91,8 @@ CONFIG_SCHEMA = cv.All(
     media_source.media_source_schema(AirPlayMediaSource)
     .extend(
         {
-            # Name in the iOS AirPlay picker. Defaults to the node's friendly_name.
+            # Name in the iOS AirPlay picker. Defaults to "<area> <friendly_name>"
+            # (from the esphome: block), see _default_name().
             cv.Optional(CONF_NAME): cv.All(cv.string_strict, cv.Length(max=64)),
             # Model advertised over mDNS (TXT "model" / "am"). Cosmetic:
             # "AudioAccessory5,1" (upstream's default) gets the HomePod mini
@@ -105,6 +130,7 @@ CONFIG_SCHEMA = cv.All(
     )
     .extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
+    _default_name,
     _consume_sockets,
     _request_networking,
 )
@@ -115,8 +141,7 @@ async def to_code(config: ConfigType) -> None:
     await cg.register_component(var, config)
     await media_source.register_media_source(var, config)
 
-    name = config.get(CONF_NAME) or CORE.friendly_name or CORE.name
-    cg.add(var.set_advertised_name(name))
+    cg.add(var.set_advertised_name(config[CONF_NAME]))
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_output_delay_us(config[CONF_OUTPUT_DELAY].total_microseconds))
     cg.add(var.set_airplay_1_only(config[CONF_AIRPLAY_1_ONLY]))

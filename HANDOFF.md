@@ -150,6 +150,9 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 **`mdns/mdns_esp32.cpp`**
 - ESPHome calls `mdns_init()` + `mdns_hostname_set()` once in `setup()` (priority `AFTER_CONNECTION`). A second `mdns_init()` returns `ESP_ERR_INVALID_STATE`, and upstream `ESP_ERROR_CHECK`s it, which would put the device in a reboot loop. Adding services later with the IDF `mdns_service_add()` is fine. ESPHome pins `espressif/mdns` **1.12.0**, which satisfies upstream's `^1.11.1`.
 
+**`core/config.py`: node name, friendly name, area**
+- `preload_core_config()` sets `CORE.name`, `CORE.friendly_name` and `CORE.area` before any component config is validated, so a component validator can read them. `CORE.area` is the area's name string (the `area:` mapping form is reduced to its `name`), or `None` without `esphome: area:`. The airplay `name` default ("<area> <friendly_name>") is built from these in `_default_name()`.
+
 **`esp32/__init__.py`**
 - `add_idf_component(name, repo, ref, path)`: `path` becomes a component-manager `path:` dependency.
 - `add_idf_sdkconfig_option()` works for our own Kconfig symbols; they showed up in the generated sdkconfig.
