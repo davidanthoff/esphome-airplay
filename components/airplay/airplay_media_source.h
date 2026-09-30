@@ -43,6 +43,7 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
   void set_advertised_name(const std::string &name) { this->advertised_name_ = name; }
   void set_model(const std::string &model) { this->model_ = model; }
   void set_output_delay_us(int32_t delay_us) { this->output_delay_us_ = delay_us; }
+  void set_airplay_1_only(bool airplay_1_only) { this->airplay_1_only_ = airplay_1_only; }
 
   // --- MediaSource interface ---
   bool play_uri(const std::string &uri) override;
@@ -97,6 +98,7 @@ class AirPlayMediaSource final : public Component, public media_source::MediaSou
   std::string advertised_name_;
   std::string model_;
   int32_t output_delay_us_{0};
+  bool airplay_1_only_{false};
   /// AirPlay device id; the same MAC ESPHome's Sendspin hub reports.
   uint8_t device_mac_[6]{};
 

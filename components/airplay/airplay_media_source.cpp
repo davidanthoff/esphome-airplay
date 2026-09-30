@@ -50,6 +50,7 @@ void AirPlayMediaSource::setup() {
   config.name = this->advertised_name_.c_str();
   config.model = this->model_.c_str();
   config.output_delay_us = this->output_delay_us_;
+  config.airplay_v1 = this->airplay_1_only_;
   get_identity_mac(config.device_mac);
   std::copy(std::begin(config.device_mac), std::end(config.device_mac), this->device_mac_);
   config.host.ctx = this;
@@ -72,9 +73,11 @@ void AirPlayMediaSource::dump_config() {
                 "  Advertised name: %s\n"
                 "  Model: %s\n"
                 "  Device id (MAC): %02X:%02X:%02X:%02X:%02X:%02X\n"
-                "  Output delay: %" PRId32 " us",
+                "  Output delay: %" PRId32 " us\n"
+                "  AirPlay 1 only: %s",
                 this->advertised_name_.c_str(), this->model_.c_str(), this->device_mac_[0], this->device_mac_[1], this->device_mac_[2],
-                this->device_mac_[3], this->device_mac_[4], this->device_mac_[5], this->output_delay_us_);
+                this->device_mac_[3], this->device_mac_[4], this->device_mac_[5], this->output_delay_us_,
+                YESNO(this->airplay_1_only_));
 }
 
 // THREAD CONTEXT: main loop

@@ -9,7 +9,7 @@
   - A 45-minute session ran with no gaps.
 - **M2 sync verified against an Apple TV:** −1.5 ms offset and no drift, measured with `tools/click-test` (§8).
 - **Still open:** two-board sync (M2.4), M3 robustness, M4 polish.
-- **Upstream:** relicensed to GPL-3.0-or-later on its `staging` branch, which also carries the unreleased "engine v2" with changed interfaces. Re-vendoring will need porting (discussed in the session; not yet written down in detail).
+- **Upstream moved to `staging` @ `764ffb6` (2026-09-29):** GPL-3.0-or-later and the new "engine v2" timing engine (§6). The M1/M2 results above were measured on the previous pin (release v0.2.1, `811d5f8`) and must be re-checked on engine v2 (§8).
 
 This document is written for whoever picks this up next (most likely Claude Code on David's machine). It records what was decided and why, and which facts were verified, so none of that needs to be rediscovered.
 
@@ -45,9 +45,9 @@ Constraint from David: **no upstream PRs required.** Everything must work from a
 
 ```
  iPhone ──RTSP/HAP/FairPlay──► ┌──────────────── airplay_core (ESP-IDF component, C) ─────────────────┐
-        ──PTP (319/320)──────► │ upstream/ (airplay-esp32 @ 811d5f8, unmodified)                    │
-        ──audio (UDP/TCP)────► │   rtsp/ hap/ plist/ ptp_clock  audio_receiver → decoder → buffer   │
-                               │   audio_timing (anchor + position servo)                          │
+        ──PTP (319/320)──────► │ upstream/ (airplay-esp32 staging @ 764ffb6, unmodified)            │
+        ──audio (UDP/TCP)────► │   rtsp/ hap/ plist/ ptp_clock  audio_receiver → decoder           │
+                               │   engine v2: RTP timeline → scheduler (drift servo)               │
                                │ src/ (our glue)                                                   │
                                │   airplay_core.c          bring-up (replaces main.c), events, vol │
                                │   mdns_airplay_esphome.c  mDNS TXT records w/o mdns_init()        │
@@ -87,7 +87,7 @@ Upstream is already built around pluggable parts, and the port only plugs into t
 3. **Volume.** Upstream calls `dac_set_volume(dB)` through a registered `dac_ops_t`. We register ops that forward to the host.
    - The host **only applies the sender's volume while AirPlay is the active source** (PLAYING/PAUSED). A value that arrives earlier is kept and applied when the session starts.
    - **Why:** senders push their stored volume as soon as they *connect*, even without playing. On 2026-09-28 both the Apple TV and Music Assistant's AirPlay provider (which probes the receiver) set the speaker to 0% while Sendspin was playing.
-4. **Session state.** `rtsp_events_register()` gives CONNECTED/PLAYING/PAUSED/DISCONNECTED/METADATA.
+4. **Session state.** `playback_events_register()` gives CONNECTED/PLAYING/PAUSED/DISCONNECTED/METADATA (§6: transitions only).
 
 ---
 
@@ -106,20 +106,20 @@ esphome-airplay/
 ├── airplay_core/                  ESP-IDF component
 │   ├── CMakeLists.txt             which upstream files are compiled / replaced
 │   ├── idf_component.yml          espressif/mdns, esp_audio_codec (libsodium: see airplay_sodium/)
-│   ├── Kconfig                    upstream symbol names (AIRPLAY_FORCE_V1, …)
+│   ├── Kconfig                    upstream symbol names (ENABLE_AIRPLAY_ARTWORK)
 │   ├── UPSTREAM.md                pinned commit + licence notes
 │   ├── include/airplay_core.h     the C API between core and ESPHome
 │   ├── src/                       our glue (see §3)
-│   └── upstream/                  vendored airplay-esp32 (main/, components/dac/, LICENSE) – never edit
+│   └── upstream/                  vendored airplay-esp32 (main/, components/dac/, LICENSE*) – never edit
 ├── airplay_sodium/                ESP-IDF component: libsodium modules ESPHome's port leaves out (§5, noise)
 ├── examples/
 │   ├── living-room-sendspin-airplay.yaml
 │   └── secrets.yaml.example
-├── scripts/sync-upstream.sh       re-vendor upstream at a commit
+├── scripts/sync-upstream.sh       re-vendor upstream at a (staging) commit
 └── tools/click-test/              measure offset/drift vs another AirPlay speaker (one mic)
 ```
 
-Why vendoring and not a git submodule: ESPHome does init submodules recursively for git external components, but upstream itself has nested submodules (u8g2 and friends). Every device build would then drag those in. Vendoring the ~1 MB we need is simpler and pins exactly what we compile.
+Why vendoring and not a git submodule: ESPHome clones git external components with `--depth=1` and does **not** initialise submodules. `external_components` calls `git.clone_or_update()` without `init_submodules`, which defaults to false (checked in 2026.9.0's `esphome/git.py`). A submodule in this repo would arrive empty on every device build. Vendoring the ~1 MB we need also pins exactly what we compile.
 
 ---
 
@@ -212,26 +212,46 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 
 ---
 
-## 6. Verified facts about upstream (airplay-esp32 @ `811d5f8`, 2026-09-21)
+## 6. Verified facts about upstream (airplay-esp32 `staging` @ `764ffb6`, 2026-09-29)
 
-- **Bring-up** (`main.c: start_airplay_services`): `ptp_clock_init → hap_init → audio_receiver_init → audio_output_init → mdns_airplay_init → audio_output_start → rtsp_server_start`. Before that, `settings_init` and `playback_control_init` run. Mirrored in `src/airplay_core.c`.
+- **Branches:** upstream takes every PR on `staging` and moves `main` only when it tags a release (`CONTRIBUTING.md`). From the v0.2.1 release (`811d5f8`, our previous pin, 2026-09-20) to `764ffb6`, `main` got only docs and release commits. We pin a `staging` commit (`airplay_core/UPSTREAM.md`).
+- **Bring-up** (`main.c: start_airplay_services`): `ptp_clock_init → hap_init → audio_receiver_init → audio_output_init → mdns_airplay_init → audio_output_start → rtsp_server_start → playback_control_set_source(AIRPLAY)`. Before that, `settings_init` and `playback_control_init` run. Mirrored in `src/airplay_core.c`. Unchanged from `811d5f8`.
 - **Compiled set:** listed in `airplay_core/CMakeLists.txt`. It references only `audio_output_*` from the output API, so there are no dependencies on led/wifi/display/web code. Checked by grep.
+  - **Upstream's own Sendspin player, USB audio and Bluetooth** (`sendspin/`, `usb/`, `audio/usb_audio_sink.c`, `audio/a2dp_sink.c`) aren't compiled. Every call into them from the compiled files is behind `CONFIG_SENDSPIN_ENABLE` / `CONFIG_USB_AUDIO_SINK` / `CONFIG_BT_A2DP_ENABLE`, which stay undefined.
+  - The compiled set calls the same `crypto_*`/`sodium_*` functions as at `811d5f8`, so `airplay_sodium/` is unchanged.
 - **Replaced:** `main.c`, `network/mdns_airplay.c` (it calls `mdns_init`), `audio/audio_output*.c`, `audio/audio_resample.c` (ESPHome's resampler speaker does this job).
 - **Device identity:** upstream uses `esp_read_mac(ESP_MAC_WIFI_STA)` everywhere: `rtsp_handlers.c` (twice), `hap_pair_verify.c`, `settings.c` and `mdns_airplay.c`.
   - **In our build,** those calls are redirected (`CMakeLists.txt`: `esp_read_mac=airplay_core_read_mac` for upstream sources only, implemented in `src/device_mac.c`). They return the **same MAC ESPHome's Sendspin hub reports**, so Music Assistant can merge both into one player (see §5, "Music Assistant").
   - Other MAC types, and all non-upstream code, still get the real values. `nm` confirms that only `device_mac.c.obj` references `esp_read_mac` directly.
   - **Changing the identity** makes iOS and Music Assistant see a "new" AirPlay device once: the old entry (e.g. Music Assistant's `ap28848554b574`) goes stale and can be removed.
-- **Advertised model:** upstream advertises `AudioAccessory5,1`, the **HomePod mini** identifier, for the iOS speaker icon. It is also hard-coded in its `/info` reply.
+- **Advertised model:** upstream advertises `AudioAccessory5,1`, the **HomePod mini** identifier, for the iOS speaker icon (`AirPort4,107` in AirPlay 1 mode). It is also hard-coded in its `/info` reply.
   - **What that did to Music Assistant** (`providers/airplay/helpers.py`): it maps the code to "Apple / HomePod Mini", and `is_apple_device()` makes it a **native** player (`PlayerType.PLAYER`), with Sendspin attached as a protocol.
   - **The consequence:** for volume and mute, Music Assistant prefers the native player *"even while a protocol renders the audio"*, so **every Music Assistant volume change went to its AirPlay provider** while Sendspin played, and never reached the device (2026-09-29).
   - **Our mDNS now advertises `model` = the YAML `model:` option,** default `esphome-airplay`, like shairport-sync's `ShairportSync`.
   - **Plus `manufacturer=ESPHome`.** This is the part that fixes Music Assistant. `get_model_info()` returns manufacturer and model verbatim when both TXT keys are present. `is_apple_device()` needs the manufacturer to start with "apple", so the receiver is a plain AirPlay protocol player even with `model: AudioAccessory5,1`. Checked against MA `dev`, 2026-09-29.
   - **Untested:** the `/info` model stays upstream's, and whether iOS behaves differently with a non-Apple model beyond the icon.
 - **Persistence:** NVS namespace `"airplay"` holds the device name, volume, HAP pairing keys and so on. It doesn't collide with ESPHome, which already ran `nvs_flash_init`. `rtsp_handlers.c` `/info` reads the name from settings, so `airplay_core_init()` writes the configured name there when it changed.
-- **Output timing contract:** `FRAME_SAMPLES = 352`. The playback task priority `AUDIO_PLAYBACK_TASK_PRIORITY = 9` must outrank the receiver tasks (8/7/5), otherwise playback drifts late (upstream issue #122). **Task stacks must stay in internal RAM** (`spiram_task.h`: flash ops disable the cache).
-- **Timing engine knobs:** `CONFIG_AIRPLAY_TIMING_THRESHOLD_MS` (buffered AAC, default 25) and `CONFIG_AIRPLAY_RT_TIMING_THRESHOLD_MS` (realtime ALAC, default 50). The `rtsp_handlers.c` comment says: **do not** advertise output latency to the sender, because the engine compensates internally and advertising would apply it twice.
+- **Output timing contract:** `FRAME_SAMPLES = 352`, also engine v2's render block. The playback task priority `AUDIO_PLAYBACK_TASK_PRIORITY = 9` must outrank the receiver tasks (8/7/5, and engine v2's `audio_decode` task at 6, pinned to core 0), otherwise playback drifts late (upstream issue #122). **Task stacks must stay in internal RAM** (`spiram_task.h`: flash ops disable the cache). The decode task adds a 6 KB internal stack.
+- **Engine v2** (`audio_engine_v2.c`, `audio_timeline.c`, `audio_scheduler.c`, `audio_clock_map.c`, `audio_epoch.c`, `audio_decode_worker.c`) replaces the old `audio_timing` position servo and its early/late thresholds. `audio_timing.c` is still compiled, for anchors and latency bookkeeping.
+  - **The output backend still pulls.** The playback task calls `audio_output_read_source()`, which is `audio_receiver_read()` unless upstream's Sendspin installs another source.
+  - **Each render is placed on the RTP timeline** at `audio_output_get_next_playout_time_ns()`: `get_pipeline_us()` plus a fixed 5 ms (`OUTPUT_PIPELINE_LATENCY_US`, `audio_output_common.c`, not weak). That's the same 5 ms that `src/audio_output_esphome.c` subtracts (`UPSTREAM_PIPELINE_LATENCY_US`, PR #5).
+  - **Drift servo:** `audio_scheduler.c` drops or repeats single samples at the quietest point of a block. The rate is proportional to the filtered error, with a ~5 s time constant and ~2 s of warm-up after each start. Upstream measured it parking within ~5 samples. The old engine trimmed ~166 samples every few minutes (§8 M2).
+  - **Memory:** the PCM timeline (~790 KB) and the decode jobs are allocated explicitly in PSRAM (`heap_caps_malloc(MALLOC_CAP_SPIRAM)`), once and never freed.
+  - **Status log:** tag `audio_v2`, a `playout: raw=… filt=… drift=… ppm trims=…/s buffered=… concealed=…` line, plus `start decision:` at each start.
+  - The `CONFIG_AIRPLAY_*TIMING_THRESHOLD_MS` symbols are still declared upstream, but nothing reads them. The `timing_threshold` YAML options were removed.
+  - The `rtsp_handlers.c` comment still holds: **do not** advertise output latency to the sender, because the engine compensates internally and advertising would apply it twice.
+- **Session events** (`playback_events.c`, replaces `rtsp/rtsp_events.c`) are an aggregate over upstream's inputs, and listeners get **transitions only**:
+  - repeats are dropped;
+  - PLAYING from idle arrives as CONNECTED then PLAYING;
+  - PAUSED from idle arrives as CONNECTED.
+
+  Every way an RTSP client goes away emits DISCONNECTED (`rtsp_server.c`), including our stop+start in `airplay_core_disconnect_client()`, so the aggregate resets for the next session.
+- **AirPlay 1 vs 2** is a runtime setting, `settings_airplay_v1()`, stored in NVS. The build option `CONFIG_AIRPLAY_FORCE_V1` is gone.
+  - It is applied only inside `settings_init()` (a set only stores it), so `airplay_core_init()` stores the YAML value when it differs and calls `settings_init()` again.
+  - **In v1 mode the RTSP server listens on port 5000**, not 7000 (`airplay_rtsp_port()`), and the classic `_raop` TXT follows shairport-sync's classic record (`vn=65537`, `da`, `fv`, `pw`, `sf`, …); `src/mdns_airplay_esphome.c` follows both.
 - **Remote control:** play/pause/next from the device works only over **DACP (AirPlay 1)**. AirPlay 2 needs MRP, which isn't implemented, so HA→iPhone transport and volume sync won't work for AirPlay 2 sessions.
 - **Stopping a session:** client slots are static in `rtsp_server.c`, and there's no public "disconnect". We currently do `rtsp_server_stop()` + `rtsp_server_start()`.
+- **Licence:** GPL-3.0-or-later plus `LICENSE-EXCEPTION`, which permits linking Espressif's binary-only components such as `esp_audio_codec` (PR #162, on `staging` since 2026-09-20).
 
 ---
 
@@ -239,17 +259,17 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 
 | File | State |
 |---|---|
-| `components/airplay/media_source.py` | ✅ validated: `esphome config` passes, and `compile --only-generate` produces the IDF path dependency, sdkconfig options and socket reservations |
-| `components/airplay/airplay_media_source.{h,cpp}` | 🟡 compiles and links for esp32s3 on 2026.9.0. Not yet run on hardware |
-| `airplay_core/include/airplay_core.h` | ✅ compiles as C and C++ in the firmware build |
-| `airplay_core/src/airplay_core.c` | 🟡 compiles and links, no warnings. Not yet run on hardware |
-| `airplay_core/src/audio_output_esphome.c` | 🟡 same. **This is where M2 happens** |
-| `airplay_core/src/mdns_airplay_esphome.c` | ✅ on hardware: the iPhone lists the device and pairs. TXT records copied 1:1 from upstream |
-| `airplay_core/src/device_mac.c` | 🟡 AirPlay device id = the Sendspin hub's MAC (§6). Built and redirect verified with `nm`; not yet on hardware |
-| `airplay_core/src/codec_alloc_psram.c` | 🟡 puts the AAC/ALAC decoders' memory in PSRAM (§5). Linked, as `nm` confirms; not yet tried on hardware |
-| `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ CMake and the component manager resolve them on 2026.9.0 with no changes needed. `espressif/mdns` is deduplicated with ESPHome's 1.12.0 |
-| `airplay_core/upstream/` | ✅ vendored by `scripts/sync-upstream.sh`. All 35 listed files compile without warnings |
-| `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0. Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` for M1 |
+| `components/airplay/media_source.py` | ✅ `esphome config` passes. `airplay_1_only` is now passed at runtime; `timing_threshold` / `realtime_timing_threshold` fail validation with a "removed" message (2026-09-29) |
+| `components/airplay/airplay_media_source.{h,cpp}` | ✅ on hardware (M1) at `811d5f8`. Compiles and links against `764ffb6`; not yet run on it |
+| `airplay_core/include/airplay_core.h` | ✅ compiles as C and C++ in the firmware build. New field `airplay_v1` |
+| `airplay_core/src/airplay_core.c` | 🟡 ported to `playback_events` and the runtime v1 setting; compiles and links, no warnings. Not yet on hardware at `764ffb6` |
+| `airplay_core/src/audio_output_esphome.c` | 🟡 M2 verified vs an Apple TV at `811d5f8`. Reads via `audio_output_read_source()` now; re-measure on engine v2 (§8 M2) |
+| `airplay_core/src/mdns_airplay_esphome.c` | 🟡 re-derived from upstream `764ffb6`: `airplay_features()`, `airplay_rtsp_port()` (5000 in v1 mode), new classic TXT set. Compiles; not yet on hardware |
+| `airplay_core/src/device_mac.c` | ✅ on hardware: AirPlay device id = the Sendspin hub's MAC (§6) |
+| `airplay_core/src/codec_alloc_psram.c` | ✅ on hardware: AAC plays (§5) |
+| `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ resolve and build on 2026.9.0 with upstream `764ffb6`: 7 engine-v2 / event sources added, `rtsp_events.c` dropped, `esp_app_format` required |
+| `airplay_core/upstream/` | ✅ `staging` @ `764ffb6`, vendored by `scripts/sync-upstream.sh`. All 41 listed files compile without warnings |
+| `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0 (1.59 MB image, RAM 37.7%). Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` |
 
 `TODO(Mx)` markers in the code point to the milestone that owns each item.
 
@@ -273,10 +293,14 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 6. Record the heap/PSRAM headroom (`debug:` component) while streaming. ESPHome's free-heap sensor is enough.
 
 **Done when:** a 10-minute AirPlay session plays with no drop-outs and no reboots, and Sendspin is unaffected.
+- **Re-check after the move to upstream `staging` (`764ffb6`):**
+  - AirPlay 2 and AirPlay 1 (now on port 5000) both play;
+  - switching between Sendspin and AirPlay works in both directions;
+  - internal heap and largest block while streaming AAC: engine v2 adds a 6 KB task stack and ~7 KB of timeline descriptors in internal RAM.
 
 ### M2: sync
-1. Log `audio_output_get_pipeline_us()` and the timing engine's servo stats (`audio_timing.c`: `pos_err_filtered_us`, `servo_trims`, late drops) once a second. Check that pipeline_us is stable and plausible, i.e. roughly the resampler+mixer+DMA buffering.
-   - Upstream already logs `audio_time: Playout: err=… depth=…` once a second and the servo engage/disengage lines. `airplay_out` now logs `pipeline=… ms submitted=… played=…` every 10 s.
+1. Log `audio_output_get_pipeline_us()` and the timing engine's servo stats once a second. Check that pipeline_us is stable and plausible, i.e. roughly the resampler+mixer+DMA buffering.
+   - Up to `811d5f8`, upstream logged `audio_time: Playout: err=… depth=…` once a second and the servo engage/disengage lines. Engine v2 (since `764ffb6`) logs `audio_v2: playout: raw=… filt=… drift=… ppm trims=…/s …` instead (§6). `airplay_out` logs `pipeline=… ms submitted=… played=…` every 10 s.
    - `err` is measured against the engine's own pipeline estimate. A wrong estimate is therefore invisible in `err` and shows up only as a constant offset against another speaker.
    - 2026-09-28: David once heard the ESP clearly out of sync with an Apple TV after switching songs. The likely cause was the cursor reset on pause/resume described in §5, fixed in the `output-cursor-fix` PR. Confirm with the microphone test.
 2. Multi-select this device + a **HomePod** on the iPhone. Measure the offset: record both with one phone mic and cross-correlate a click track (e.g. Audacity), or listen for flanging with both close together. Set `output_delay` to the TOSLINK receiver's/AVR's latency; many AVRs have a known "audio delay" in their menus.
@@ -291,7 +315,8 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 4. Two ESP32 devices + HomePod multi-selected, ~1 h. The servo should hold them without audible drift.
 
 **Done when:** it's within a few ms of a HomePod by ear with both side by side, and stays there over an hour.
-- **Status 2026-09-28:** met against an **Apple TV**: −1.5 ms, no drift over 23 + 11 minutes of click tests, plus a clean 45-minute session.
+- **Status 2026-09-28:** met against an **Apple TV**: −1.5 ms, no drift over 23 + 11 minutes of click tests, plus a clean 45-minute session. All of this was on the old upstream engine (`811d5f8`).
+- **After the move to engine v2 (`764ffb6`):** repeat the click test (item 2) and a long logged session. Expect the same offset, since the 5 ms compensation carries over (§6), and a much smaller sawtooth: single-sample trims instead of ~166-sample steps. Check that `audio_v2 … filt=` settles within ~1 ms and `trims=` stays around 1/s.
 - **Still open:** item 4, two ESP speakers plus the reference for about an hour. This needs a second board.
 
 ### M3: robustness
@@ -326,11 +351,12 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | 4 | **Flush / stale audio** | See M3. |
 | 5 | **Two sources of truth for volume** | The iPhone slider, the HA slider, and the player's `volume_min/max` (0.4–0.9 in this config). Mapping is linear dB→0..1, then the player's range. It may feel odd; tune in M4. |
 | 6 | **`esp_audio_codec` licence**: binary-only, "exclusively with Espressif products" | Fine for personal builds. It conflicts with plain GPL for *distributed binaries*, which is why upstream's GPL PR adds a linking exception. Don't publish binaries until that's sorted. |
-| 7 | **Upstream licence** | The vendored v0.2.1 (`main` @ `811d5f8`) is still non-commercial. PR #162 (GPL-3.0-or-later plus a `LICENSE-EXCEPTION` that explicitly permits linking Espressif binary parts such as `esp_audio_codec`) was **merged into upstream `staging` on 2026-09-20** but isn't in a release yet. Personal use and a public non-commercial repo are fine now. Pick our own licence (GPL-3.0-or-later is the natural fit) once we vendor a relicensed release. |
+| 7 | **Upstream licence** | Resolved by vendoring `staging` @ `764ffb6`: GPL-3.0-or-later plus a `LICENSE-EXCEPTION` that explicitly permits linking Espressif binary parts such as `esp_audio_codec` (PR #162). Upstream `main` / v0.2.1 is still non-commercial. **Open: pick this repo's own licence.** GPL-3.0-or-later is the natural fit, and `src/mdns_airplay_esphome.c` is derived from upstream anyway. |
 | 8 | **ESPHome API churn** | `media_source` and Sendspin are new and marked experimental. Pin the ESPHome version you build with, and re-check §5 on upgrades. |
 | 9 | **Sockets estimate** | Verify with lwIP stats in M1; `media_source.py` reserves TCP 5 / UDP 6 / listen 3. |
 | 10 | **`output_delay` on this TOSLINK chain** | Resolved for this setup. Before PR #5 the ESP was 14 ms early (our own estimate, not the receiver); after it, −1.5 ms, within measurement error, so `output_delay: 0`. Other receivers or AVRs may need a value; measure with `tools/click-test`. |
 | 11 | **Stale PTP lock at AirPlay 1 start** | Seen 2026-09-28. An AirPlay 2 client (192.168.1.39) connected and left. `ptp_clock` then reported LOCKED with an absurd offset. The next AirPlay 1 session's first anchors used PTP (`ptp_locked=1`, frames "13 years early") until the lock dropped after ~6 s and NTP took over. This is upstream behaviour, harmless once NTP takes over, but it may delay the start of AirPlay 1 playback. Revisit in M3 if it's audible. |
+| 12 | **Tracking upstream `staging`** | We pin a pre-release commit. Engine v2 and the source-handover logic are weeks old and got race fixes as late as 2026-09-03. Pin exact commits, re-run the §8 M1/M2 checks after each bump, and prefer bumping to a commit that is also in a release when one exists. |
 
 ---
 
@@ -342,7 +368,8 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | Use airplay-esp32, not a fresh port of shairport-sync | shairport-sync + NQPTP port; openairplay Python receiver | ESP-IDF native, already ESP32-S3 tuned, has PTP + timing servo + pluggable output |
 | External component, no upstream PRs | Upstream ESPHome component | David's constraint; the ESPHome media-source API has enough hooks |
 | Core as a local IDF component via `add_idf_component(path=…)` | Flatten all C into `components/airplay/` | Loader copies only top-level files; keeps upstream layout + include paths intact |
-| Vendor upstream (script) | git submodule | Avoids nested submodules on every device build; exact pin |
+| Vendor upstream (script) | git submodule | ESPHome doesn't initialise submodules of external components (§4); exact pin |
+| Pin upstream `staging`, not `main` | Stay on release v0.2.1 until the next release | All upstream code work and PRs go to `staging`; the GPL relicensing and engine v2 exist only there. Moved before the remaining M2 work, so it isn't spent on a retired engine (2026-09-29) |
 | New output backend + `get_pipeline_us` from `notify_audio_played` | Port Sendspin's sync task; patch the ESPHome speaker API | Upstream's servo already does the work; the ESPHome feedback hook exists; zero upstream edits |
 | Replace `mdns_airplay.c` instead of patching | Patch upstream | Upstream must stay unmodified; the file is small |
 | `has_internal_playlist() = true` | false | Same as Sendspin: the player must not advance its own playlist when we go idle |
@@ -352,7 +379,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 
 ## 11. Working in this repo
 
-- **Never edit `airplay_core/upstream/`.** Glue goes in `airplay_core/src/`, ESPHome code in `components/airplay/`. Re-vendor with `scripts/sync-upstream.sh <commit>`, then diff upstream `network/mdns_airplay.c` against `src/mdns_airplay_esphome.c`.
+- **Never edit `airplay_core/upstream/`.** Glue goes in `airplay_core/src/`, ESPHome code in `components/airplay/`. Re-vendor with `scripts/sync-upstream.sh <full staging commit SHA>`, then work through the checklist in `airplay_core/UPSTREAM.md`.
 - Build and test:
   ```bash
   pip install esphome==2026.9.0        # or the version you pin; Python ≥ 3.12
@@ -368,7 +395,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - **"Update available" after every install means the new firmware crashed and was rolled back.** A firmware that panics before `safe_mode` marks the boot successful (60 s) is rolled back by the bootloader. The device then reports the old build, so ESPHome Builder offers the update again.
   - Check the startup log for `OTA rollback detected! Rolled back from partition …`, `Reset Reason: exception/panic` and the `compiled on` timestamp.
   - The crash itself happens before the API log connection is up, so a backtrace needs the USB serial console.
-- Logs: the ESPHome C++ side (`airplay.media_source`) follows `logger:`. The C core and upstream (`airplay_core`, `airplay_out`, `rtsp_handlers`, `audio_timing`, …) show up under tag `esp-idf` and are gated by `esp32: framework: log_level:` (§5).
+- Logs: the ESPHome C++ side (`airplay.media_source`) follows `logger:`. The C core and upstream (`airplay_core`, `airplay_out`, `rtsp_handlers`, `audio_v2`, …) show up under tag `esp-idf` and are gated by `esp32: framework: log_level:` (§5).
 - The device is David's living-room Sendspin speaker, so keep a known-good firmware to fall back to. The config without the `esphome-airplay` bits is his current one.
 
 ---

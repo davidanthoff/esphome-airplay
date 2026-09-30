@@ -97,6 +97,14 @@ typedef struct {
   int32_t output_delay_us;
 
   /**
+   * Advertise and speak AirPlay 1 (classic RAOP) only: no HomeKit pairing,
+   * no multi-room sync, but DACP remote control works. The RTSP server then
+   * listens on port 5000 instead of 7000. Stored in upstream's NVS settings;
+   * a change is written once, on the next boot with the new value.
+   */
+  bool airplay_v1;
+
+  /**
    * MAC address used as the AirPlay device id (mDNS "deviceid", /info, HAP).
    * All zero: the ESP32's Wi-Fi station MAC, like upstream. The ESPHome
    * component passes the MAC its Sendspin hub reports, so that Music

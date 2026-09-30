@@ -6,7 +6,7 @@
 # replace the pieces that assume they own the device (main.c, wifi.c, the I2S
 # output backend, mdns_airplay.c) with the files in src/.
 #
-# STATUS: not yet built. Expect to iterate on this list in milestone M1.
+# When re-vendoring, compare this list with upstream main/CMakeLists.txt.
 
 set(UP ${CMAKE_CURRENT_LIST_DIR}/upstream/main)
 
@@ -14,6 +14,7 @@ set(UPSTREAM_SRCS
     ${UP}/alac_magic_cookie.c
     ${UP}/settings.c
     ${UP}/playback_control.c
+    ${UP}/playback_events.c              # session events (was rtsp/rtsp_events.c)
     ${UP}/dacp_client.c
     ${UP}/audio/audio_receiver.c
     ${UP}/audio/audio_stream.c
@@ -21,7 +22,13 @@ set(UPSTREAM_SRCS
     ${UP}/audio/audio_stream_buffered.c
     ${UP}/audio/audio_decoder.c
     ${UP}/audio/audio_buffer.c
-    ${UP}/audio/audio_timing.c
+    ${UP}/audio/audio_timing.c           # anchors and latency bookkeeping
+    ${UP}/audio/audio_epoch.c            # engine v2: RTP-addressed PCM timeline,
+    ${UP}/audio/audio_clock_map.c        #   scheduler with the drift servo, and
+    ${UP}/audio/audio_timeline.c         #   the decode worker for buffered streams
+    ${UP}/audio/audio_scheduler.c
+    ${UP}/audio/audio_engine_v2.c
+    ${UP}/audio/audio_decode_worker.c
     ${UP}/audio/audio_crypto.c
     ${UP}/audio/audio_output_common.c    # weak defaults for optional output API
     ${UP}/rtsp/rtsp_server.c
@@ -31,7 +38,6 @@ set(UPSTREAM_SRCS
     ${UP}/rtsp/rtsp_fairplay.c
     ${UP}/rtsp/rtsp_crypto.c
     ${UP}/rtsp/rtsp_rsa.c
-    ${UP}/rtsp/rtsp_events.c
     ${UP}/plist/plist_xml.c
     ${UP}/plist/bplist_parser.c
     ${UP}/plist/bplist_builder.c
@@ -54,7 +60,11 @@ set(UPSTREAM_SRCS
 #   audio/audio_output*.c       -> src/audio_output_esphome.c
 #   audio/audio_resample.c      -> ESPHome's resampler speaker
 #   network/wifi.c ethernet.c web_server.c ota.c dns_server.c log_stream.c
-#   led.c buttons.c eq_events.c bt_coex.c audio/a2dp_sink.c
+#   led.c buttons.c bt_coex.c audio/a2dp_sink.c
+#   sendspin/ usb/ audio/usb_audio_sink.c: upstream's own Sendspin player and
+#     USB audio. Every call into them from the files above sits behind
+#     CONFIG_SENDSPIN_ENABLE / CONFIG_USB_AUDIO_SINK / CONFIG_BT_A2DP_ENABLE,
+#     which stay undefined here.
 #   components/{boards,display,dac_tas5*,dac_es8311,spiffs_storage,...}
 
 set(GLUE_SRCS
@@ -89,6 +99,7 @@ idf_component_register(
         libsodium         # ESPHome's esphome/libsodium, added by media_source.py
         airplay_sodium    # the libsodium modules ESPHome's port leaves out (../airplay_sodium)
         esp_http_client   # dacp_client.c (AirPlay 1 remote control)
+        esp_app_format    # esp_app_get_description() in the AirPlay 1 mDNS record
         mbedtls
         lwip
 )
