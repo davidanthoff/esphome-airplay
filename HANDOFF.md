@@ -251,6 +251,14 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
   - **In v1 mode the RTSP server listens on port 5000**, not 7000 (`airplay_rtsp_port()`), and the classic `_raop` TXT follows shairport-sync's classic record (`vn=65537`, `da`, `fv`, `pw`, `sf`, …); `src/mdns_airplay_esphome.c` follows both.
 - **Remote control:** play/pause/next from the device works only over **DACP (AirPlay 1)**. AirPlay 2 needs MRP, which isn't implemented, so HA→iPhone transport and volume sync won't work for AirPlay 2 sessions.
 - **Stopping a session:** client slots are static in `rtsp_server.c`, and there's no public "disconnect". We currently do `rtsp_server_stop()` + `rtsp_server_start()`.
+  - **AirPlay 2 senders** notice and let go.
+  - **AirPlay 1 senders don't:** they stream over UDP, and the iPhone kept showing "playing" after a Sendspin takeover (2026-09-29). So for a *playing* AirPlay 1 session, `airplay_core_disconnect_client()` first sends DACP `playpause`. The iPhone then pauses and tears the session down itself. The server restart is kept as a fallback after 3 s.
+  - Upstream's DACP client only has the `playpause` toggle, hence "only while playing". Its worker skips requests once the session is cleared, hence waiting in a separate task instead of stopping right away.
+- **AirPlay 1 pause/resume is slow** (2026-09-29, `764ffb6`):
+  - The iPhone pauses an AirPlay 1 session with FLUSH + TEARDOWN and resumes with a full reconnect.
+  - Each reconnect restarts upstream's NTP timing client. It polls every 3 s and locks after 3 replies (`ntp_clock.c`: `TIMING_INTERVAL_MS`, `MIN_MEASUREMENTS`), and engine v2 starts only once locked. So resume takes ~6 s: RECORD → NTP locked → `start decision` measured at +5.7 s and +5.8 s. The first start is the same.
+  - The offset measured on each reconnect was identical, which it would be for the same sender.
+  - A possible upstream fix: burst the first timing requests, or keep the offset for a client that reconnects within the DACP grace period. Not pursued; AirPlay 1 is low priority.
 - **Licence:** GPL-3.0-or-later plus `LICENSE-EXCEPTION`, which permits linking Espressif's binary-only components such as `esp_audio_codec` (PR #162, on `staging` since 2026-09-20).
 
 ---
@@ -262,7 +270,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | `components/airplay/media_source.py` | ✅ `esphome config` passes. `airplay_1_only` is now passed at runtime; `timing_threshold` / `realtime_timing_threshold` fail validation with a "removed" message (2026-09-29) |
 | `components/airplay/airplay_media_source.{h,cpp}` | ✅ on hardware (M1) at `811d5f8`. Compiles and links against `764ffb6`; not yet run on it |
 | `airplay_core/include/airplay_core.h` | ✅ compiles as C and C++ in the firmware build. New field `airplay_v1` |
-| `airplay_core/src/airplay_core.c` | 🟡 ported to `playback_events` and the runtime v1 setting; compiles and links, no warnings. Not yet on hardware at `764ffb6` |
+| `airplay_core/src/airplay_core.c` | ✅ on hardware at `764ffb6` (AirPlay 2 and AirPlay 1, 2026-09-29). 🟡 The DACP pause before dropping an AirPlay 1 session (§6) compiles; not yet on hardware |
 | `airplay_core/src/audio_output_esphome.c` | 🟡 M2 verified vs an Apple TV at `811d5f8`. Reads via `audio_output_read_source()` now; re-measure on engine v2 (§8 M2) |
 | `airplay_core/src/mdns_airplay_esphome.c` | 🟡 re-derived from upstream `764ffb6`: `airplay_features()`, `airplay_rtsp_port()` (5000 in v1 mode), new classic TXT set. Compiles; not yet on hardware |
 | `airplay_core/src/device_mac.c` | ✅ on hardware: AirPlay device id = the Sendspin hub's MAC (§6) |
@@ -326,7 +334,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
   - (c) keep the chain shallow; the resampler/mixer `buffer_duration` is configurable.
   Measure first, pick after.
 - **Pause:** currently PAUSED + output inactive. Compare that with "keep PLAYING, write silence" for resume latency.
-- **Sendspin takes over mid-AirPlay:** STOP → `airplay_core_disconnect_client()`. Check the iPhone's UI behaviour. Replace stop+start with a real disconnect: add `rtsp_server_disconnect_clients()` as a small upstream PR, or as a wrapper that is still compiled from upstream.
+- **Sendspin takes over mid-AirPlay:** STOP → `airplay_core_disconnect_client()`. AirPlay 2: the iPhone lets go (checked 2026-09-29). AirPlay 1: it didn't; it now gets a DACP pause first (§6), still to be checked on hardware. Replace stop+start with a real disconnect: add `rtsp_server_disconnect_clients()` as a small upstream PR, or as a wrapper that is still compiled from upstream.
 - **AirPlay takes over mid-Sendspin:** request_play_uri → the player stops Sendspin. Check that MA shows the player as busy/external and doesn't fight back.
 - **Announcements** (HA TTS via the announcement pipeline) during AirPlay: the mixer ducks. Sync is lost while ducking, but it must recover.
 - **Network:** Ethernet unplug/replug, DHCP renew, and HA API reconnect. Do mDNS and the sockets survive? Restart the core if not (`TODO(M4)` in `loop()`).

@@ -157,7 +157,10 @@ void airplay_core_notify_played(uint32_t frames, int64_t timestamp_us);
 
 /**
  * Drop the current AirPlay session (e.g. because Sendspin took over the
- * speaker). The sender sees the speaker disconnect.
+ * speaker). An AirPlay 2 sender sees the speaker disconnect. A playing
+ * AirPlay 1 sender is asked to pause over DACP first, so it ends the session
+ * itself and shows "paused"; the connection is dropped after 3 s if it
+ * hasn't. Returns immediately in both cases.
  */
 void airplay_core_disconnect_client(void);
 
