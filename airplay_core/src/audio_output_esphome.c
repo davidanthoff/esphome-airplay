@@ -171,6 +171,7 @@ static void playback_task(void *arg) {
                pipeline_us / 1000, measured ? "measured" : "no feedback yet",
                __atomic_load_n(&s_submitted_frames, __ATOMIC_RELAXED),
                __atomic_load_n(&s_played_frames, __ATOMIC_RELAXED));
+      airplay_core_log_clock_status();
     }
 
     uint32_t rate = (uint32_t)s_source_rate;

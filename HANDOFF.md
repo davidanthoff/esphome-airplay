@@ -309,6 +309,10 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 ### M2: sync
 1. Log `audio_output_get_pipeline_us()` and the timing engine's servo stats once a second. Check that pipeline_us is stable and plausible, i.e. roughly the resampler+mixer+DMA buffering.
    - Up to `811d5f8`, upstream logged `audio_time: Playout: err=… depth=…` once a second and the servo engage/disengage lines. Engine v2 (since `764ffb6`) logs `audio_v2: playout: raw=… filt=… drift=… ppm trims=…/s …` instead (§6). `airplay_out` logs `pipeline=… ms submitted=… played=…` every 10 s.
+   - Next to it, `airplay_core` logs `clock: master=… locked=… syncs=+N followups=+N rate=±x ppm raw-filt=… us …`: the PTP clock the engine follows, as changes since the previous line (`airplay_core_log_clock_status()`).
+     - While playing, `syncs=` should be about +80 per 10 s (PTP sends 8 SYNCs a second).
+     - `rate=` is the ESP crystal against the master: a steady value of tens of ppm; negative means the ESP runs fast.
+     - `syncs=+0` together with `rate=+0.0` means the offset is frozen, and the ESP plays on its own crystal.
    - `err` is measured against the engine's own pipeline estimate. A wrong estimate is therefore invisible in `err` and shows up only as a constant offset against another speaker.
    - 2026-09-28: David once heard the ESP clearly out of sync with an Apple TV after switching songs. The likely cause was the cursor reset on pause/resume described in §5, fixed in the `output-cursor-fix` PR. Confirm with the microphone test.
 2. Multi-select this device + a **HomePod** on the iPhone. Measure the offset: record both with one phone mic and cross-correlate a click track (e.g. Audacity), or listen for flanging with both close together. Set `output_delay` to the TOSLINK receiver's/AVR's latency; many AVRs have a known "audio delay" in their menus.
@@ -325,6 +329,16 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 **Done when:** it's within a few ms of a HomePod by ear with both side by side, and stays there over an hour.
 - **Status 2026-09-28:** met against an **Apple TV**: −1.5 ms, no drift over 23 + 11 minutes of click tests, plus a clean 45-minute session. All of this was on the old upstream engine (`811d5f8`).
 - **After the move to engine v2 (`764ffb6`):** repeat the click test (item 2) and a long logged session. Expect the same offset, since the 5 ms compensation carries over (§6), and a much smaller sawtooth: single-sample trims instead of ~166-sample steps. Check that `audio_v2 … filt=` settles within ~1 ms and `trims=` stays around 1/s.
+- **First engine-v2 click test, 2026-09-29: drift, probably not engine v2's fault.**
+  - **Setup:** the sender was an *old iPhone* (192.168.1.75), grouped with the Apple TV. Its announced PTP master was `84ab1a79ffb90008`. Every earlier session used `38e13d76…` (David's iPhone) or `c0956d82…` (yesterday's test).
+  - **Result:** over the ~7 min before the session was cut, the ESP drifted in a straight line from +3.0 to −4.9 ms against the Apple TV (distance-corrected, 3/11 ft): **−64 ms/hour ≈ 18 ppm**, with no corrections.
+  - **What the engine saw:** `filt` within ±0.05 ms, estimated `drift` ~0 ppm, and 2 trims in 8 min (vs ~0.5/s with David's iPhone).
+  - **So the engine was not following the group clock.**
+  - **Suspected cause:** PTP locked on only 8 samples (`dev=0ns`), then three `SETPEERS` ("clock will re-lock") arrived, and no PTP line followed for the rest of the session.
+  - `ptp_clock.c` discards SYNC/FOLLOW_UP from any clock but the expected master. If the group's grandmaster changed with the peers (e.g. to the Apple TV) and nothing re-announced it, the offset froze. The ESP then ran on its own crystal (~18–25 ppm fast, cf. the 2026-09-28 measurement).
+  - The asymmetric offset filter alone can't explain it: with the current constants, 18 ppm leaves a constant ~0.6 ms lag, not a growing error.
+  - **Next:** the `clock:` diagnostics line (item 1) shows it directly. Repeat with David's iPhone (expect no drift) and with the old iPhone (expect `syncs=+0`, `rate=+0.0`).
+  - The analysis needed an explicit split, because the ESP dropped out mid-recording instead of being muted at the end (the session was cut; see §9 #13). `analyze.py` expects the reference-only beats at the end.
 - **Still open:** item 4, two ESP speakers plus the reference for about an hour. This needs a second board.
 
 ### M3: robustness
@@ -365,6 +379,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | 10 | **`output_delay` on this TOSLINK chain** | Resolved for this setup. Before PR #5 the ESP was 14 ms early (our own estimate, not the receiver); after it, −1.5 ms, within measurement error, so `output_delay: 0`. Other receivers or AVRs may need a value; measure with `tools/click-test`. |
 | 11 | **Stale PTP lock at AirPlay 1 start** | Seen 2026-09-28. An AirPlay 2 client (192.168.1.39) connected and left. `ptp_clock` then reported LOCKED with an absurd offset. The next AirPlay 1 session's first anchors used PTP (`ptp_locked=1`, frames "13 years early") until the lock dropped after ~6 s and NTP took over. This is upstream behaviour, harmless once NTP takes over, but it may delay the start of AirPlay 1 playback. Revisit in M3 if it's audible. |
 | 12 | **Tracking upstream `staging`** | We pin a pre-release commit. Engine v2 and the source-handover logic are weeks old and got race fixes as late as 2026-09-03. Pin exact commits, re-run the §8 M1/M2 checks after each bump, and prefer bumping to a commit that is also in a release when one exists. |
+| 13 | **Any new AirPlay connection ends the current session** | Upstream's `rtsp_server.c` calls `signal_old_client_stop()` on every `accept()`, before the new client asks for anything. **Seen:** Music Assistant's AirPlay provider (Home Assistant host, 192.168.1.39) connects now and then (15 times on 2026-09-29, often ~8 s after an ESP boot); at 20:22 it cut a running click test, then left after 28 s without playing. **Workaround:** disable the AirPlay protocol player for this device in Music Assistant, which should use Sendspin anyway. **Proper fix (upstream):** preempt only when the new client sets up a stream; shairport-sync refuses a second session while one plays unless configured otherwise. |
 
 ---
 

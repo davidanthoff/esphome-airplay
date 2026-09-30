@@ -28,6 +28,10 @@ const char *airplay_core_get_model(void);
 size_t airplay_core_host_write(const int16_t *pcm, size_t frames,
                                uint32_t sample_rate, uint32_t timeout_ms);
 
+/** Log one "clock:" diagnostics line (PTP state since the previous call).
+ * Called from the playback task only, next to its pipeline line. */
+void airplay_core_log_clock_status(void);
+
 /* ---- device_mac.c -------------------------------------------------------- */
 
 /** Set the identity MAC (all zero or NULL: use the real Wi-Fi STA MAC). */

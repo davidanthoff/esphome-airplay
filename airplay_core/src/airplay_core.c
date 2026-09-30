@@ -13,10 +13,12 @@
 #include "airplay_core.h"
 #include "airplay_core_internal.h"
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -317,4 +319,66 @@ bool airplay_core_remote_command(airplay_core_remote_t command) {
   default:
     return false;
   }
+}
+
+/* ---- clock diagnostics --------------------------------------------------- */
+
+/* Diagnostics for the PTP clock the timing engine follows (HANDOFF §8, M2).
+ * A click test on 2026-09-29 (old iPhone as sender, grouped with an Apple TV)
+ * drifted 18 ppm while the engine saw no error. Suspected: the PTP offset
+ * stopped updating after SETPEERS changed the group. This line shows it:
+ *   syncs/followups  SYNC/FOLLOW_UP messages accepted since the last line.
+ *                    Upstream drops messages from any clock other than the
+ *                    expected master, and does not count those, so +0 while
+ *                    playing means the master went quiet or was replaced.
+ *   rate             change of the filtered offset (master - local) over the
+ *                    interval. It follows the ESP crystal against the master,
+ *                    so it should be a steady non-zero value (tens of ppm).
+ *                    Exactly 0 with +0 syncs means the offset is frozen.
+ *                    Negative: the ESP's clock runs fast.
+ *   raw-filt         last raw sample minus the filtered offset.
+ * Upstream code is not touched; everything comes from ptp_clock.h. Runs on
+ * the playback task only, so the static state needs no locking. */
+void airplay_core_log_clock_status(void) {
+  static bool s_have_prev = false;
+  static uint64_t s_prev_master;
+  static ptp_stats_t s_prev;
+  static int64_t s_prev_us;
+
+  ptp_stats_t st;
+  ptp_clock_get_stats(&st);
+  const uint64_t master = ptp_clock_get_master_clock_id();
+  const bool locked = ptp_clock_is_locked();
+  const int64_t now_us = esp_timer_get_time();
+
+  /* Deltas only make sense against the same master and without a reset in
+   * between (ptp_clock_set_master_clock_id() / ptp_clock_clear()). */
+  const bool comparable = s_have_prev && master == s_prev_master &&
+                          st.sync_count >= s_prev.sync_count &&
+                          now_us > s_prev_us;
+  if (comparable) {
+    const double rate_ppm =
+        (double)(st.filtered_offset_ns - s_prev.filtered_offset_ns) * 1000.0 /
+        (double)(now_us - s_prev_us);
+    ESP_LOGI(TAG,
+             "clock: master=%016llx locked=%d syncs=+%" PRIu32
+             " followups=+%" PRIu32 " rate=%+.1f ppm raw-filt=%+lld us"
+             " outliers=+%" PRIu32 " locked_for=%" PRIu32 " s",
+             (unsigned long long)master, locked,
+             st.sync_count - s_prev.sync_count,
+             st.followup_count - s_prev.followup_count, rate_ppm,
+             (long long)((st.last_offset_ns - st.filtered_offset_ns) / 1000),
+             st.outlier_count - s_prev.outlier_count, st.lock_time_ms / 1000);
+  } else {
+    ESP_LOGI(TAG,
+             "clock: master=%016llx locked=%d syncs=%" PRIu32
+             " followups=%" PRIu32 " (new master or reset; rates next line)",
+             (unsigned long long)master, locked, st.sync_count,
+             st.followup_count);
+  }
+
+  s_have_prev = true;
+  s_prev_master = master;
+  s_prev = st;
+  s_prev_us = now_us;
 }
