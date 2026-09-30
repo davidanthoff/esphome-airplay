@@ -38,6 +38,7 @@ Constraint from David: **no upstream PRs required.** Everything must work from a
 - **Current role:** Sendspin player ("Sendspin TOSLINK", HA entity `media_player.sendspin_toslink_54b574`, node `living-room-sendspin`), based on RealDeco's SendspinZero config.
 - **ESPHome:** config has `min_version: 2026.8.0`. Everything here was checked against **2026.9.0** (tag) and `dev` @ `30dc453` (2026-09-29).
 - Full config with AirPlay added: [`examples/living-room-sendspin-airplay.yaml`](examples/living-room-sendspin-airplay.yaml). Every addition is marked `esphome-airplay`.
+- **Second device:** Seeed Studio **XIAO ESP32S3** (8 MB flash, 8 MB octal PSRAM, **WiFi only**, U.FL antenna), TOSLINK from D3 (GPIO4), node `dining-room-speakers`. Config: [`examples/dining-room-speakers.yaml`](examples/dining-room-speakers.yaml). It is the living-room config with the board-specific parts changed.
 
 ---
 
@@ -114,6 +115,7 @@ esphome-airplay/
 ├── airplay_sodium/                ESP-IDF component: libsodium modules ESPHome's port leaves out (§5, noise)
 ├── examples/
 │   ├── living-room-sendspin-airplay.yaml
+│   ├── dining-room-speakers.yaml   XIAO ESP32S3, WiFi only
 │   └── secrets.yaml.example
 ├── scripts/sync-upstream.sh       re-vendor upstream at a (staging) commit
 └── tools/click-test/              measure offset/drift vs another AirPlay speaker (one mic)
@@ -278,6 +280,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ resolve and build on 2026.9.0 with upstream `764ffb6`: 7 engine-v2 / event sources added, `rtsp_events.c` dropped, `esp_app_format` required |
 | `airplay_core/upstream/` | ✅ `staging` @ `764ffb6`, vendored by `scripts/sync-upstream.sh`. All 41 listed files compile without warnings |
 | `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0 (1.59 MB image, RAM 37.7%). Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` |
+| `examples/dining-room-speakers.yaml` | ✅ compiles on 2026.9.0 (1.54 MB image of a 3.75 MB app partition, RAM 37.2%). Not yet run on hardware |
 
 `TODO(Mx)` markers in the code point to the milestone that owns each item.
 

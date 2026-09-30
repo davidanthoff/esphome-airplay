@@ -1,0 +1,363 @@
+## SendspinZero-style TOSLINK player + AirPlay 2 receiver (esphome-airplay)
+## Seeed Studio XIAO ESP32S3 + TOSLINK transmitter (WiFi only, no Ethernet)
+##
+## Same as living-room-sendspin-airplay.yaml except for the board: 8 MB flash,
+## no Ethernet, TOSLINK on D3. Every AirPlay addition is marked "esphome-airplay".
+##
+## Wiring:
+##   D3 (GPIO4) -> TOSLINK DATA / VIN
+##   3V3        -> TOSLINK VCC
+##   GND        -> TOSLINK GND
+##
+## The XIAO ESP32S3 has no PCB antenna: attach the U.FL antenna that ships
+## with it, or WiFi (and with it AirPlay timing) will be poor.
+
+substitutions:
+  name: dining-room-speakers
+  friendly_name: Dining Room Speakers
+  area: Dining Room
+
+  # Startup sound options:
+  # Home_Connected
+  # Home_Connected_Male
+  startup_sound_file: Home_Connected
+
+  # Keep this at 44100 initially, matching SendspinZero.
+  media_sample_rate: "44100"
+
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.9.0   # esphome-airplay: the version it was built and verified with
+  name_add_mac_suffix: false
+
+  project:
+    name: realdeco.sendspin_zero
+    version: "2026.8.0"
+
+
+#######################################################################
+# esphome-airplay: external component
+#
+# Local checkout while developing (path is relative to this file).
+# Once pushed, switch to the git source below and pin a ref.
+#######################################################################
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [airplay]
+  # ESPHome Builder (Home Assistant) cannot see a local checkout; use:
+  # - source: github://davidanthoff/esphome-airplay@main
+  #   components: [airplay]
+  #   refresh: 0s   # re-pull on every build while iterating; pin a tag later
+
+
+#######################################################################
+# ESP32-S3
+#######################################################################
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    # esphome-airplay: the AirPlay core logs through ESP-IDF (ESP_LOGx), and
+    # ESPHome only lets ERROR through by default. INFO shows session start/stop,
+    # pairing and timing warnings. Back to the default once things are stable.
+    log_level: INFO
+
+
+#######################################################################
+# PSRAM
+#
+# XIAO ESP32S3 (ESP32-S3R8) has 8 MB octal PSRAM.
+#######################################################################
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+
+#######################################################################
+# Logging
+#######################################################################
+
+logger:
+  # esphome-airplay: DEBUG while bringing AirPlay up (was WARN). ESP-IDF output
+  # from the C core arrives under the tag "esp-idf" and is filtered by
+  # esp32: framework: log_level above, not by this level or by `logs:`.
+  level: DEBUG
+
+
+#######################################################################
+# Home Assistant API
+#######################################################################
+
+api:
+  on_client_connected:
+    - lambda: |-
+        if (!id(boot_sound_played)) {
+          id(boot_sound_played) = true;
+          if (id(startup_sound_switch).state) {
+            id(play_sound)->execute(true, std::string("ready_sound"));
+          }
+        }
+
+
+#######################################################################
+# OTA updates
+#######################################################################
+
+ota:
+  - platform: esphome
+
+
+#######################################################################
+# WIFI
+#
+# The XIAO has no Ethernet. The airplay component keeps WiFi out of power
+# save while a session is active.
+#######################################################################
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+#######################################################################
+# SENDSPIN
+#######################################################################
+
+sendspin:
+  id: sendspin_hub
+
+
+#######################################################################
+# DIGITAL AUDIO / TOSLINK
+#
+# D3 (GPIO4) goes to DATA/VIN on the optical transmitter.
+#######################################################################
+
+i2s_audio:
+  - id: i2s_audio_bus
+
+
+speaker:
+  - platform: i2s_audio
+    id: box_speaker
+    sample_rate: ${media_sample_rate}
+    i2s_dout_pin: GPIO4
+    spdif_mode: true
+    i2s_audio_id: i2s_audio_bus
+    dac_type: external
+    channel: stereo
+    use_apll: true
+
+  - platform: mixer
+    id: mixing_speaker
+    output_speaker: box_speaker
+    num_channels: 2
+    source_speakers:
+      - id: announcement_mixing_input
+      - id: media_mixing_input
+
+  - platform: resampler
+    id: announcement_resampling_speaker
+    output_speaker: announcement_mixing_input
+    sample_rate: ${media_sample_rate}
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: media_resampling_speaker
+    output_speaker: media_mixing_input
+    sample_rate: ${media_sample_rate}
+    bits_per_sample: 16
+
+
+#######################################################################
+# STARTUP SOUND
+#######################################################################
+
+audio_file:
+  - id: ready_sound
+    file: https://github.com/RealDeco/xiaozhi-esphome/raw/main/sounds/${startup_sound_file}.flac
+
+
+#######################################################################
+# MEDIA SOURCES
+#######################################################################
+
+media_source:
+  - platform: audio_file
+    id: audio_file_announcement_source
+
+  - platform: audio_http
+    id: http_announcement_source
+
+  - platform: audio_http
+    id: http_media_source
+
+  - platform: sendspin
+    id: sendspin_media_source
+
+  # esphome-airplay: shows up in the iPhone's AirPlay picker.
+  - platform: airplay
+    id: airplay_media_source
+    name: ${friendly_name}        # name in the AirPlay picker
+    output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
+    # model: esphome-airplay      # "AudioAccessory5,1" = HomePod mini icon in iOS
+    # airplay_1_only: false     # true: classic AirPlay 1 only (RTSP on port 5000)
+
+
+#######################################################################
+# MEDIA PLAYERS
+#######################################################################
+
+media_player:
+  - platform: sendspin
+    id: sendspin_group_media_player
+    name: Sendspin Group Media Player
+
+  - platform: speaker_source
+    id: external_media_player
+    name: Media Player
+
+    announcement_pipeline:
+      format: FLAC
+      num_channels: 1
+      sample_rate: ${media_sample_rate}
+      speaker: announcement_resampling_speaker
+      sources:
+        - audio_file_announcement_source
+        - http_announcement_source
+
+    media_pipeline:
+      format: FLAC
+      num_channels: 2
+      sample_rate: ${media_sample_rate}
+      speaker: media_resampling_speaker
+      sources:
+        - http_media_source
+        - sendspin_media_source
+        - airplay_media_source    # esphome-airplay
+
+    volume_increment: 0.05
+    volume_min: 0.4
+    volume_max: 0.9
+
+
+#######################################################################
+# SCRIPTS
+#######################################################################
+
+script:
+  - id: play_sound
+    parameters:
+      priority: bool
+      sound_file: string
+
+    then:
+      - if:
+          condition:
+            lambda: return priority;
+
+          then:
+            - media_player.stop:
+                id: external_media_player
+                announcement: true
+
+      - lambda: |-
+          if (
+            (id(external_media_player).state !=
+             media_player::MediaPlayerState::MEDIA_PLAYER_STATE_ANNOUNCING)
+            || priority
+          ) {
+            id(external_media_player)
+              ->make_call()
+              .set_media_url("audio-file://" + sound_file)
+              .set_announcement(true)
+              .perform();
+          }
+
+
+#######################################################################
+# CONFIGURATION SWITCHES
+#######################################################################
+
+switch:
+  - platform: template
+    id: startup_sound_switch
+    name: Startup sound
+    icon: "mdi:music-note"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+
+#######################################################################
+# RESTART BUTTON
+#######################################################################
+
+button:
+  - platform: restart
+    id: restart_button
+    name: Restart
+    entity_category: config
+    icon: "mdi:restart"
+
+
+#######################################################################
+# SENDSPIN METADATA
+#######################################################################
+
+text_sensor:
+  - platform: sendspin
+    id: sendspin_title
+    name: Song Title
+    type: title
+
+  - platform: sendspin
+    id: sendspin_artist
+    name: Song Artist
+    type: artist
+
+  - platform: sendspin
+    id: sendspin_album
+    name: Album Name
+    type: album
+
+
+#######################################################################
+# esphome-airplay: DIAGNOSTICS
+#
+# Heap / PSRAM headroom while streaming (HANDOFF.md, milestone M1).
+#######################################################################
+
+debug:
+  update_interval: 10s
+
+sensor:
+  - platform: debug
+    free:
+      name: Heap Free
+    block:
+      name: Heap Max Block
+    min_free:
+      name: Heap Min Free
+    psram:
+      name: PSRAM Free
+    loop_time:
+      name: Loop Time
+
+
+#######################################################################
+# GLOBALS
+#######################################################################
+
+globals:
+  - id: boot_sound_played
+    type: bool
+    restore_value: no
+    initial_value: "false"
