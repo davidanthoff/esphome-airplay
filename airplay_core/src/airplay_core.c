@@ -17,6 +17,8 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "airplay_sodium.h"
 
@@ -231,19 +233,71 @@ void airplay_core_notify_played(uint32_t frames, int64_t timestamp_us) {
   airplay_output_notify_played(frames, timestamp_us);
 }
 
-void airplay_core_disconnect_client(void) {
-  /* TODO(M3): upstream has no public "drop the current client" call; the
-   * client slots are static in rtsp_server.c. Restarting the server works
-   * but also closes the listening socket for a moment. Consider adding a
-   * small rtsp_server_disconnect_clients() upstream (it would reuse
-   * signal_old_client_stop()). */
-  if (!s_running) {
-    return;
-  }
+/* TODO(M3): upstream has no public "drop the current client" call; the
+ * client slots are static in rtsp_server.c. Restarting the server works
+ * but also closes the listening socket for a moment. Consider adding a
+ * small rtsp_server_disconnect_clients() upstream (it would reuse
+ * signal_old_client_stop()). */
+static void drop_client_now(void) {
   rtsp_server_stop();
   if (rtsp_server_start() != ESP_OK) {
     ESP_LOGE(TAG, "rtsp_server_start failed after disconnect");
   }
+}
+
+/* An AirPlay 1 sender streams over UDP and does not notice a dropped RTSP
+ * connection: the iPhone keeps showing "playing" (seen on hardware
+ * 2026-09-29). So ask it to pause over DACP. It then ends the session itself
+ * (FLUSH + TEARDOWN, as for a pause from its own UI) and shows "paused".
+ * Drop the connection anyway if it hasn't within DACP_RELEASE_TIMEOUT_MS.
+ *
+ * Upstream only offers the playpause toggle, so this runs only while the
+ * session is playing; on a paused sender it would resume playback. It runs in
+ * its own task: the DACP request goes out on upstream's worker task, and
+ * clearing the session (which dropping the connection does) before that would
+ * make the worker skip it. */
+#define DACP_RELEASE_TIMEOUT_MS 3000
+#define DACP_RELEASE_POLL_MS 100
+#define DACP_RELEASE_TASK_STACK 4096 /* internal RAM, like upstream's tasks */
+
+static volatile bool s_release_pending = false;
+
+static void dacp_release_task(void *arg) {
+  (void)arg;
+  dacp_send_playpause();
+  int waited_ms = 0;
+  while (waited_ms < DACP_RELEASE_TIMEOUT_MS && playback_events_any_playing()) {
+    vTaskDelay(pdMS_TO_TICKS(DACP_RELEASE_POLL_MS));
+    waited_ms += DACP_RELEASE_POLL_MS;
+  }
+  if (!playback_events_any_playing()) {
+    ESP_LOGI(TAG, "AirPlay 1 sender paused after %d ms (DACP)", waited_ms);
+  } else if (s_running) {
+    ESP_LOGW(TAG, "AirPlay 1 sender still playing after %d ms; dropping it",
+             waited_ms);
+    drop_client_now();
+  }
+  s_release_pending = false;
+  vTaskDelete(NULL);
+}
+
+void airplay_core_disconnect_client(void) {
+  if (!s_running) {
+    return;
+  }
+  if (dacp_is_active() && playback_events_any_playing()) {
+    if (s_release_pending) {
+      return;
+    }
+    s_release_pending = true;
+    if (xTaskCreate(dacp_release_task, "airplay_release",
+                    DACP_RELEASE_TASK_STACK, NULL, 5, NULL) == pdPASS) {
+      return;
+    }
+    s_release_pending = false;
+    ESP_LOGE(TAG, "Could not start the DACP release task");
+  }
+  drop_client_now();
 }
 
 bool airplay_core_remote_command(airplay_core_remote_t command) {
