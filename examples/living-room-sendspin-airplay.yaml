@@ -26,6 +26,7 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  area: ${area}
   min_version: 2026.9.0   # esphome-airplay: the version it was built and verified with
   name_add_mac_suffix: false
 
@@ -215,7 +216,7 @@ media_source:
   # esphome-airplay: shows up in the iPhone's AirPlay picker.
   - platform: airplay
     id: airplay_media_source
-    name: ${friendly_name}        # name in the AirPlay picker
+    # name: Kitchen               # AirPlay picker name; default "<area> <friendly_name>"
     output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
     # model: esphome-airplay      # "AudioAccessory5,1" = HomePod mini icon in iOS
     # airplay_1_only: false     # true: classic AirPlay 1 only (RTSP on port 5000)
