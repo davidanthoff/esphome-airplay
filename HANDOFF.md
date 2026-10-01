@@ -35,7 +35,7 @@ Constraint from David: **no upstream PRs required.** Everything must work from a
 
 - **Board:** Waveshare **ESP32-S3-POE-ETH**: 16 MB flash, 8 MB octal PSRAM, onboard **W5500 Ethernet** (wired PTP is much better than WiFi).
 - **Output:** **TOSLINK** from GPIO17, using ESPHome's `i2s_audio` speaker in `spdif_mode`, at **44.1 kHz**. That is AirPlay's native rate, so there's no resampling on the AirPlay path.
-- **Current role:** Sendspin player ("Sendspin TOSLINK", HA entity `media_player.sendspin_toslink_54b574`, node `living-room-sendspin`), based on RealDeco's SendspinZero config.
+- **Current role:** Sendspin player ("Sendspin TOSLINK" at the time; the example now uses "Living Room Speakers", HA entity `media_player.sendspin_toslink_54b574`, node `living-room-sendspin`), based on RealDeco's SendspinZero config.
 - **ESPHome:** config has `min_version: 2026.8.0`. Everything here was checked against **2026.9.0** (tag) and `dev` @ `30dc453` (2026-09-29).
 - Full config with AirPlay added: [`examples/living-room-sendspin-airplay.yaml`](examples/living-room-sendspin-airplay.yaml). Every addition is marked `esphome-airplay`.
 - **Second device:** Seeed Studio **XIAO ESP32S3** (8 MB flash, 8 MB octal PSRAM, **WiFi only**, U.FL antenna), TOSLINK from D3 (GPIO4), node `dining-room-speakers`. Config: [`examples/dining-room-speakers.yaml`](examples/dining-room-speakers.yaml). It is the living-room config with the board-specific parts changed.
@@ -151,7 +151,10 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 - ESPHome calls `mdns_init()` + `mdns_hostname_set()` once in `setup()` (priority `AFTER_CONNECTION`). A second `mdns_init()` returns `ESP_ERR_INVALID_STATE`, and upstream `ESP_ERROR_CHECK`s it, which would put the device in a reboot loop. Adding services later with the IDF `mdns_service_add()` is fine. ESPHome pins `espressif/mdns` **1.12.0**, which satisfies upstream's `^1.11.1`.
 
 **`core/config.py`: node name, friendly name, area**
-- `preload_core_config()` sets `CORE.name`, `CORE.friendly_name` and `CORE.area` before any component config is validated, so a component validator can read them. `CORE.area` is the area's name string (the `area:` mapping form is reduced to its `name`), or `None` without `esphome: area:`. The airplay `name` default ("<area> <friendly_name>") is built from these in `_default_name()`.
+- `preload_core_config()` sets `CORE.name`, `CORE.friendly_name` and `CORE.area` before any component config is validated, so a component validator can read them. `CORE.area` is the area's name string (the `area:` mapping form is reduced to its `name`), or `None` without `esphome: area:`. `friendly_name` defaults to `""`.
+
+**`sendspin/sendspin_hub.cpp`: the name Music Assistant shows**
+- `build_client_config_()` sends `App.get_friendly_name()` as the `client/hello` name, so it is empty without a `friendly_name`. `sendspin:` has no `name` option in 2026.9.0. `dev` added `manufacturer` / `model` / `firmware_version` (esphome#18792, falling back to `esphome: project:`), but the name is still the friendly_name. The airplay `name` therefore defaults to the friendly_name too (node name if empty), so both protocols show one name. Put the room in `friendly_name` (e.g. "Living Room Speakers") rather than prefixing the area in our component; an area prefix briefly shipped in #16 and was removed because Sendspin can't match it.
 
 **`esp32/__init__.py`**
 - `add_idf_component(name, repo, ref, path)`: `path` becomes a component-manager `path:` dependency.

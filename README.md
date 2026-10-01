@@ -14,7 +14,7 @@ external_components:
 media_source:
   - platform: airplay
     id: airplay_media_source
-    # name: Living Room          # defaults to "<area> <friendly_name>" from the esphome: block
+    # name: Living Room          # defaults to the node's friendly_name, the name Sendspin uses
     # output_delay: 0ms          # latency added after the ESP32 (TOSLINK receiver, AVR); negative = play later
     # model: esphome-airplay     # advertised over mDNS; see below
     # airplay_1_only: false      # classic AirPlay 1 only (RTSP on port 5000)
