@@ -206,7 +206,7 @@ media_source:
   # esphome-airplay: shows up in the iPhone's AirPlay picker.
   - platform: airplay
     id: airplay_media_source
-    # name: Kitchen               # AirPlay picker name; default "<area> <friendly_name>"
+    # name: Kitchen               # AirPlay picker name; default friendly_name (as Sendspin)
     output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
     # model: esphome-airplay      # "AudioAccessory5,1" = HomePod mini icon in iOS
     # airplay_1_only: false     # true: classic AirPlay 1 only (RTSP on port 5000)

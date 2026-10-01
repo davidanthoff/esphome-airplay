@@ -53,19 +53,17 @@ def _consume_sockets(config: ConfigType) -> ConfigType:
 
 
 def _default_name(config: ConfigType) -> ConfigType:
-    """Default the AirPlay name to "<area> <friendly_name>".
+    """Default the AirPlay name to the node's friendly_name.
 
-    CORE.area and CORE.friendly_name are set by preload_core_config() before any
-    component is validated (esphome/core/config.py, 2026.9). The area is left
-    out when there is none, or when the friendly name already starts with it
-    ("Dining Room" + "Dining Room Speakers" stays "Dining Room Speakers").
+    That is the name ESPHome's Sendspin hub announces (sendspin_hub.cpp,
+    build_client_config_()), so the speaker has one name in Music Assistant and
+    in the AirPlay picker. Sendspin sends an empty name when there is no
+    friendly_name; we use the node name then. CORE.friendly_name is set by
+    preload_core_config() before any component is validated.
     """
     if CONF_NAME in config:
         return config
     name = CORE.friendly_name or CORE.name
-    area = CORE.area
-    if area and not f"{name} ".lower().startswith(f"{area} ".lower()):
-        name = f"{area} {name}"
     if len(name) > 64:
         raise cv.Invalid(
             f"Default AirPlay name '{name}' is longer than 64 characters; "
@@ -91,8 +89,8 @@ CONFIG_SCHEMA = cv.All(
     media_source.media_source_schema(AirPlayMediaSource)
     .extend(
         {
-            # Name in the iOS AirPlay picker. Defaults to "<area> <friendly_name>"
-            # (from the esphome: block), see _default_name().
+            # Name in the iOS AirPlay picker. Defaults to the node's
+            # friendly_name, the same name Sendspin uses; see _default_name().
             cv.Optional(CONF_NAME): cv.All(cv.string_strict, cv.Length(max=64)),
             # Model advertised over mDNS (TXT "model" / "am"). Cosmetic:
             # "AudioAccessory5,1" (upstream's default) gets the HomePod mini
