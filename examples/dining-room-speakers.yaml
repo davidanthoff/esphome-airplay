@@ -1,7 +1,7 @@
 ## SendspinZero-style TOSLINK player + AirPlay 2 receiver (esphome-airplay)
 ## Seeed Studio XIAO ESP32S3 + TOSLINK transmitter (WiFi only, no Ethernet)
 ##
-## Same as living-room-sendspin-airplay.yaml except for the board: 8 MB flash,
+## Same as living-room-speakers.yaml except for the board: 8 MB flash,
 ## no Ethernet, TOSLINK on D3. Every AirPlay addition is marked "esphome-airplay".
 ##
 ## Wiring:
@@ -39,21 +39,15 @@ esphome:
 
 
 #######################################################################
-# esphome-airplay: external component
+# esphome-airplay: external component (from GitHub)
 #
-# Local checkout while developing (path is relative to this file).
-# Once pushed, switch to the git source below and pin a ref.
+# refresh: 0s re-pulls main on every build while we iterate.
 #######################################################################
 
 external_components:
-  - source:
-      type: local
-      path: ../components
+  - source: github://davidanthoff/esphome-airplay@main
     components: [airplay]
-  # ESPHome Builder (Home Assistant) cannot see a local checkout; use:
-  # - source: github://davidanthoff/esphome-airplay@main
-  #   components: [airplay]
-  #   refresh: 0s   # re-pull on every build while iterating; pin a tag later
+    refresh: 0s
 
 
 #######################################################################
@@ -98,6 +92,8 @@ logger:
 #######################################################################
 
 api:
+  encryption:
+    key: !secret dining_room_speakers__encryption_key
   on_client_connected:
     - lambda: |-
         if (!id(boot_sound_played)) {
@@ -217,9 +213,9 @@ media_source:
 #######################################################################
 
 media_player:
-  - platform: sendspin
-    id: sendspin_group_media_player
-    name: Sendspin Group Media Player
+  # - platform: sendspin
+  #   id: sendspin_group_media_player
+  #   name: Sendspin Group Media Player
 
   - platform: speaker_source
     id: external_media_player

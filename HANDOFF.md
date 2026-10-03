@@ -37,7 +37,7 @@ Constraint from David: **no upstream PRs required.** Everything must work from a
 - **Output:** **TOSLINK** from GPIO17, using ESPHome's `i2s_audio` speaker in `spdif_mode`, at **44.1 kHz**. That is AirPlay's native rate, so there's no resampling on the AirPlay path.
 - **Current role:** Sendspin player ("Sendspin TOSLINK" at the time; the example now uses "Living Room Speakers", HA entity `media_player.sendspin_toslink_54b574`, node `living-room-sendspin`), based on RealDeco's SendspinZero config.
 - **ESPHome:** config has `min_version: 2026.8.0`. Everything here was checked against **2026.9.0** (tag) and `dev` @ `30dc453` (2026-09-29).
-- Full config with AirPlay added: [`examples/living-room-sendspin-airplay.yaml`](examples/living-room-sendspin-airplay.yaml). Every addition is marked `esphome-airplay`.
+- Full config with AirPlay added: [`examples/living-room-speakers.yaml`](examples/living-room-speakers.yaml). Every addition is marked `esphome-airplay`.
 - **Second device:** Seeed Studio **XIAO ESP32S3** (8 MB flash, 8 MB octal PSRAM, **WiFi only**, U.FL antenna), TOSLINK from D3 (GPIO4), node `dining-room-speakers`. Config: [`examples/dining-room-speakers.yaml`](examples/dining-room-speakers.yaml). It is the living-room config with the board-specific parts changed.
 
 ---
@@ -114,7 +114,7 @@ esphome-airplay/
 │   └── upstream/                  vendored airplay-esp32 (main/, components/dac/, LICENSE*) – never edit
 ├── airplay_sodium/                ESP-IDF component: libsodium modules ESPHome's port leaves out (§5, noise)
 ├── examples/
-│   ├── living-room-sendspin-airplay.yaml
+│   ├── living-room-speakers.yaml
 │   ├── dining-room-speakers.yaml   XIAO ESP32S3, WiFi only
 │   └── secrets.yaml.example
 ├── scripts/sync-upstream.sh       re-vendor upstream at a (staging) commit
@@ -285,7 +285,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 | `airplay_core/src/codec_alloc_psram.c` | ✅ on hardware: AAC plays (§5) |
 | `airplay_core/CMakeLists.txt`, `idf_component.yml`, `Kconfig` | ✅ resolve and build on 2026.9.0 with upstream `764ffb6`: 7 engine-v2 / event sources added, `rtsp_events.c` dropped, `esp_app_format` required |
 | `airplay_core/upstream/` | ✅ `staging` @ `764ffb6`, vendored by `scripts/sync-upstream.sh`. All 41 listed files compile without warnings |
-| `examples/living-room-sendspin-airplay.yaml` | ✅ compiles on 2026.9.0 (1.59 MB image, RAM 37.7%). Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` |
+| `examples/living-room-speakers.yaml` | ✅ compiles on 2026.9.0 (1.59 MB image, RAM 37.7%). Has debug sensors (heap/PSRAM) and IDF `log_level: INFO` |
 | `examples/dining-room-speakers.yaml` | ✅ compiles on 2026.9.0 (1.54 MB image of a 3.75 MB app partition, RAM 37.2%). Not yet run on hardware |
 
 `TODO(Mx)` markers in the code point to the milestone that owns each item.
@@ -295,7 +295,7 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
 ## 8. Milestones
 
 ### M1: builds, advertises, plays (no sync claims yet)
-1. ✅ **Done 2026-09-28:** it compiled and linked on the first real build with no changes, so none of the problems anticipated below came up. `esphome compile examples/living-room-sendspin-airplay.yaml` (needs `examples/secrets.yaml`). Fix build errors. Expected ones:
+1. ✅ **Done 2026-09-28:** it compiled and linked on the first real build with no changes, so none of the problems anticipated below came up. `esphome compile examples/living-room-speakers.yaml` (needs `examples/secrets.yaml`). Fix build errors. Expected ones:
    - component-manager resolution of `airplay_core` deps (mdns, libsodium, esp_audio_codec);
    - warnings-as-errors in upstream C: loosen per file in `CMakeLists.txt`, don't edit `upstream/`;
    - missing IDF components (anything else in `DEFAULT_EXCLUDED_IDF_COMPONENTS` → `esp32.include_builtin_idf_component`);
@@ -416,13 +416,13 @@ Paths are in the ESPHome repo. These are the facts the design depends on.
   ```bash
   pip install esphome==2026.9.0        # or the version you pin; Python ≥ 3.12
   cd examples && cp secrets.yaml.example secrets.yaml   # fill in
-  esphome config living-room-sendspin-airplay.yaml
-  esphome compile living-room-sendspin-airplay.yaml
-  esphome run living-room-sendspin-airplay.yaml         # USB first time, OTA after
-  esphome logs living-room-sendspin-airplay.yaml
+  esphome config living-room-speakers.yaml
+  esphome compile living-room-speakers.yaml
+  esphome run living-room-speakers.yaml         # USB first time, OTA after
+  esphome logs living-room-speakers.yaml
   ```
-- The example config uses the component from the local checkout (`type: local, path: ../components`). When switching to `github://…@ref`, the whole repo (including `airplay_core/`) must be in that repo.
-- **ESPHome Builder (Home Assistant add-on)** can't see a local checkout. Paste the example with `external_components` switched to `github://davidanthoff/esphome-airplay@<ref>`, `components: [airplay]`, `refresh: 0s`. That exact variant was compiled on 2026.9.0, and `AIRPLAY_CORE_DIR` resolves inside the cloned repo. Use an add-on on 2026.9.x.
+- **The examples are the exact configs in ESPHome Builder** (Home Assistant add-on), byte for byte, comments included. Keep both in sync: change one, copy it to the other. They pull the component from `github://davidanthoff/esphome-airplay@main` with `refresh: 0s`, because the Builder can't see a local checkout. API keys are `!secret`s; `secrets.yaml.example` lists the names. `AIRPLAY_CORE_DIR` resolves inside the cloned repo. Use an add-on on 2026.9.x.
+- **Building uncommitted or branch code locally:** the examples always build `main` from GitHub. Push the branch and use a copy pointing at `@<branch>`, or a throwaway copy with `type: local, path: <repo>/components`. Don't commit either change to the examples.
 - **Long logs:** the ESPHome Builder log view in Home Assistant stopped collecting after ~16 minutes twice, while the device kept running. For long sessions, run `esphome logs <yaml> --device <ip>` in a loop that reconnects, appending to a file (used for the 45-minute run in §8 M2).
 - **"Update available" after every install means the new firmware crashed and was rolled back.** A firmware that panics before `safe_mode` marks the boot successful (60 s) is rolled back by the bootloader. The device then reports the old build, so ESPHome Builder offers the update again.
   - Check the startup log for `OTA rollback detected! Rolled back from partition …`, `Reset Reason: exception/panic` and the `compiled on` timestamp.

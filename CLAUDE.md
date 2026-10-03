@@ -18,10 +18,12 @@ This repo adds an AirPlay 2 receiver to an ESPHome Sendspin speaker, as an ESPHo
 ```bash
 pip install esphome==2026.9.0      # Python >= 3.12
 cd examples && cp secrets.yaml.example secrets.yaml
-esphome config  living-room-sendspin-airplay.yaml
-esphome compile living-room-sendspin-airplay.yaml
-esphome run     living-room-sendspin-airplay.yaml
-esphome logs    living-room-sendspin-airplay.yaml
+esphome config  living-room-speakers.yaml
+esphome compile living-room-speakers.yaml
+esphome run     living-room-speakers.yaml
+esphome logs    living-room-speakers.yaml
 ```
+
+The examples are exact copies of the configs in ESPHome Builder, so they pull the component from `github://davidanthoff/esphome-airplay@main`. To build uncommitted or branch code, either push the branch and point the copy at `@<branch>`, or build a throwaway copy with the source switched to `type: local, path: <repo>/components`. Don't commit either change to the examples.
 
 There are no unit tests. Verification happens on hardware; the acceptance criteria for each milestone are in HANDOFF.md §8. Keep the per-file status table in HANDOFF.md §7 current.
