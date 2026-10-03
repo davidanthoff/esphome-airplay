@@ -110,6 +110,7 @@ api:
 
 ota:
   - platform: esphome
+    encryption:   # empty: OTA reuses the API encryption key above
 
 
 #######################################################################
