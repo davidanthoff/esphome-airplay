@@ -235,6 +235,10 @@ void airplay_core_notify_played(uint32_t frames, int64_t timestamp_us) {
   airplay_output_notify_played(frames, timestamp_us);
 }
 
+void airplay_core_set_output_delay_us(int32_t output_delay_us) {
+  airplay_output_configure(output_delay_us);
+}
+
 /* TODO(M3): upstream has no public "drop the current client" call; the
  * client slots are static in rtsp_server.c. Restarting the server works
  * but also closes the listening socket for a moment. Consider adding a

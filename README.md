@@ -30,6 +30,21 @@ media_player:
 
 Requirements: ESP32 (S3 with PSRAM recommended), ESP-IDF framework, ESPHome ≥ 2026.9.
 
+**Output delay without recompiling:** a TOSLINK receiver, DAC or AVR after the ESP32 adds delay that no sync protocol can see. Add the `airplay` number platform to get one "Output delay" setting (ms, 0–500) on the device page in Home Assistant:
+
+```yaml
+media_source:
+  - platform: sendspin
+    id: sendspin_media_source
+    static_delay_adjustable: true   # required: otherwise Sendspin ignores the delay
+
+number:
+  - platform: airplay
+    name: Output delay
+```
+
+AirPlay and Sendspin both play that much earlier, and the value is kept on the device. `output_delay:` then only sets the value for the very first boot. Sendspin is linked automatically when the node has a `sendspin:` hub. Music Assistant's own Sendspin static delay setting follows this one; if it is changed in Music Assistant, the speaker sets it back. Measure the value with [`tools/click-test`](tools/click-test).
+
 **`model`:** cosmetic. `model: "AudioAccessory5,1"` makes iOS show a HomePod mini icon. The receiver always advertises `manufacturer=ESPHome` as well, so Music Assistant never mistakes it for a real HomePod. If it did, MA would send all volume changes over AirPlay, even while Sendspin is playing.
 
 ## Licence
