@@ -95,6 +95,8 @@ static volatile bool s_running = false;
 static volatile bool s_active = false;
 static volatile bool s_flush_requested = false;
 static volatile int s_source_rate = 44100;
+/* Set from the main loop (airplay_core_set_output_delay_us), read by the
+ * timing engine's tasks; __atomic builtins like the counters below. */
 static int32_t s_output_delay_us = 0;
 
 /* Written by the playback task / speaker callback task; 64-bit so they never
@@ -197,7 +199,7 @@ static void playback_task(void *arg) {
 /* ---- glue called from airplay_core.c --------------------------------- */
 
 void airplay_output_configure(int32_t output_delay_us) {
-  s_output_delay_us = output_delay_us;
+  __atomic_store_n(&s_output_delay_us, output_delay_us, __ATOMIC_RELAXED);
 }
 
 void airplay_output_set_active(bool active) {
@@ -288,7 +290,8 @@ void audio_output_set_source_rate(int rate) {
 }
 
 uint32_t audio_output_get_hardware_latency_us(void) {
-  int64_t us = (int64_t)HOST_NOMINAL_LATENCY_US + s_output_delay_us;
+  int64_t us = (int64_t)HOST_NOMINAL_LATENCY_US +
+               __atomic_load_n(&s_output_delay_us, __ATOMIC_RELAXED);
   return us > 0 ? (uint32_t)us : 0;
 }
 
@@ -318,7 +321,8 @@ bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us) {
     *now_us = now;
   }
   if (pipeline_us != NULL) {
-    int64_t us = (int64_t)((queued * 1000000ULL) / rate) + s_output_delay_us -
+    int64_t us = (int64_t)((queued * 1000000ULL) / rate) +
+                 __atomic_load_n(&s_output_delay_us, __ATOMIC_RELAXED) -
                  UPSTREAM_PIPELINE_LATENCY_US;
     *pipeline_us = us > 0 ? (uint32_t)us : 0;
   }

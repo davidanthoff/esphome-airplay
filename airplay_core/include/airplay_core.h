@@ -156,6 +156,14 @@ void airplay_core_reset_output_cursor(void);
 void airplay_core_notify_played(uint32_t frames, int64_t timestamp_us);
 
 /**
+ * Change output_delay_us (see airplay_core_config_t) at runtime. Any thread,
+ * any time, also before airplay_core_init(). The timing engine picks the new
+ * value up on its next latency query and corrects for the step like for any
+ * other timing error.
+ */
+void airplay_core_set_output_delay_us(int32_t output_delay_us);
+
+/**
  * Drop the current AirPlay session (e.g. because Sendspin took over the
  * speaker). An AirPlay 2 sender sees the speaker disconnect. A playing
  * AirPlay 1 sender is asked to pause over DACP first, so it ends the session

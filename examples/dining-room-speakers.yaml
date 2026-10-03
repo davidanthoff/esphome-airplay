@@ -198,12 +198,13 @@ media_source:
 
   - platform: sendspin
     id: sendspin_media_source
+    static_delay_adjustable: true   # esphome-airplay: set by the Output delay number
 
   # esphome-airplay: shows up in the iPhone's AirPlay picker.
   - platform: airplay
     id: airplay_media_source
     # name: Kitchen               # AirPlay picker name; default friendly_name (as Sendspin)
-    output_delay: 0ms             # tune against another AirPlay 2 speaker; negative = play later
+    output_delay: 18ms            # first boot only, then the Output delay number below
     # model: esphome-airplay      # "AudioAccessory5,1" = HomePod mini icon in iOS
     # airplay_1_only: false     # true: classic AirPlay 1 only (RTSP on port 5000)
 
@@ -291,6 +292,20 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+
+
+#######################################################################
+# esphome-airplay: OUTPUT DELAY
+#
+# Delay of the hardware after the ESP32 (TOSLINK receiver, DAC, amp). AirPlay
+# and Sendspin both play this much earlier. Set it in Home Assistant (device
+# page, Configuration); it is kept on the device, and Music Assistant's
+# Sendspin static delay follows it.
+#######################################################################
+
+number:
+  - platform: airplay
+    name: Output delay
 
 
 #######################################################################
